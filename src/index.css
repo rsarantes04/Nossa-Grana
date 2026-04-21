@@ -94,15 +94,3 @@
     border-radius: 20px;
   }
 }
-
-html, body {
-  overscroll-behavior-y: none !important;
-  touch-action: pan-y;
-  -webkit-overflow-scrolling: touch;
-}
-
-#root {
-  overscroll-behavior-y: none;
-  min-height: 100vh;
-}
-}

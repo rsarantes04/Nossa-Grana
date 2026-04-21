@@ -131,9 +131,3 @@ export default function App() {
     </>
   );
 }
-// Impede o pull-to-refresh no topo da página
-window.addEventListener('touchmove', function(e) {
-  if (window.scrollY === 0) {
-    e.preventDefault();
-  }
-}, { passive: false });
