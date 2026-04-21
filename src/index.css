@@ -53,13 +53,23 @@
 }
 
 @layer base {
-  html {
+  html, body {
     font-size: var(--font-base, 15px);
+    height: 100%;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden; /* Evita rolagem no nível do body */
     overscroll-behavior-y: none;
+    touch-action: pan-y; /* Permite apenas rolagem vertical */
   }
 
-  body {
+  #root {
+    height: 100%;
+    width: 100%;
+    overflow-y: auto; /* Rolagem apenas no nivel do container root */
     overscroll-behavior-y: none;
+    -webkit-overflow-scrolling: touch;
   }
 
   /* Scrollbar Styling */

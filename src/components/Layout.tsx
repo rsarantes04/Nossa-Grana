@@ -68,7 +68,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, setActiveTa
       />
 
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto flex flex-col">
+      <main className="flex-1 overflow-y-auto flex flex-col [overscroll-behavior-y:none]">
         <div className="flex-1 pb-8">
           {children}
         </div>
