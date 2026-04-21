@@ -8,6 +8,16 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="apple-touch-icon" href="https://picsum.photos/seed/nossagrana/192/192" />
+    <script>
+      // Prevent pull-to-refresh
+      window.addEventListener('touchmove', function(e) {
+        if (e.touches.length > 1) { e.preventDefault(); }
+      }, {passive: false});
+      
+      document.addEventListener('touchstart', function(e) {
+        if (e.touches.length > 1) { e.preventDefault(); }
+      }, {passive: false});
+    </script>
   </head>
   <body>
     <div id="root"></div>
