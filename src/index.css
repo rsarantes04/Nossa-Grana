@@ -96,9 +96,13 @@
 }
 
 html, body {
-    /* Impede o comportamento de pull-to-refresh no Android */
-    overscroll-behavior-y: contain;
-    
-    /* Opcional: Melhora a rolagem em iOS */
-    -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: none !important;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
+#root {
+  overscroll-behavior-y: none;
+  min-height: 100vh;
+}
 }
