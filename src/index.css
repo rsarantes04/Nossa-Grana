@@ -94,3 +94,11 @@
     border-radius: 20px;
   }
 }
+
+html, body {
+    /* Impede o comportamento de pull-to-refresh no Android */
+    overscroll-behavior-y: contain;
+    
+    /* Opcional: Melhora a rolagem em iOS */
+    -webkit-overflow-scrolling: touch;
+}
