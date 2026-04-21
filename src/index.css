@@ -67,7 +67,8 @@
   #root {
     height: 100%;
     width: 100%;
-    overflow-y: auto; /* Rolagem apenas no nivel do container root */
+    overflow-y: scroll; /* Força a renderização da barra de rolagem */
+    scrollbar-gutter: stable; /* Mantém o layout estável com a barra */
     overscroll-behavior-y: none;
     -webkit-overflow-scrolling: touch;
   }
