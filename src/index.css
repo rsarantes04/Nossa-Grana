@@ -1,0 +1,59 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@600;700&family=JetBrains+Mono:wght@600&display=swap');
+@import "tailwindcss";
+
+@theme {
+  /* Azul Marinho Profundo */
+  --color-navy-principal: #1B2B44;
+  --color-navy-dark: #0F1A2E;
+  --color-navy-medium: #2A3F5F;
+  --color-navy-light: #E8ECF2;
+
+  /* Dourado Metálico */
+  --color-gold-principal: #C9A962;
+  --color-gold-dark: #A88B4A;
+  --color-gold-light: #F5F0E6;
+  --color-gold-soft: #F5F0E6;
+
+  /* Branco e Off-White */
+  --color-white-pure: #FFFFFF;
+  --color-white-off: #F8F9FA;
+  --color-white-ice: #E9ECEF;
+
+  /* Verde Prosperidade */
+  --color-green-forest: #2E7D4A;
+  --color-green-dark: #1B5E38;
+  --color-green-soft: #E8F5E9;
+
+  /* Vermelho Elegante */
+  --color-red-brick: #B85450;
+  --color-red-dark: #8B3A36;
+  --color-red-soft: #FCE8E8;
+
+  /* Azul Informativo */
+  --color-blue-steel: #4A6FA5;
+  --color-blue-dark: #3A5A8A;
+  --color-blue-soft: #E8EEF5;
+
+  /* Laranja Atenção */
+  --color-amber-principal: #C78D3A;
+  --color-amber-dark: #A06D2B;
+  --color-amber-soft: #FDF3E0;
+
+  /* Cinza Sofisticado */
+  --color-gray-bluish: #2C3E50;
+  --color-gray-medium: #5A6A7A;
+  --color-gray-light: #8A9AA8;
+  --color-gray-ice: #CAD5E0;
+  --color-gray-soft: #E2E8F0;
+
+  /* Typography */
+  --font-serif: "Playfair Display", serif;
+  --font-sans: "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+@layer base {
+  html {
+    font-size: var(--font-base, 15px);
+  }
+}
