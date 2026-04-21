@@ -9,13 +9,18 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="apple-touch-icon" href="https://picsum.photos/seed/nossagrana/192/192" />
     <script>
-      // Prevent pull-to-refresh
-      window.addEventListener('touchmove', function(e) {
-        if (e.touches.length > 1) { e.preventDefault(); }
+      let startY = 0;
+      document.addEventListener('touchstart', function(e) {
+        startY = e.touches[0].pageY;
       }, {passive: false});
       
-      document.addEventListener('touchstart', function(e) {
-        if (e.touches.length > 1) { e.preventDefault(); }
+      document.addEventListener('touchmove', function(e) {
+        let y = e.touches[0].pageY;
+        let root = document.getElementById('root');
+        // Prevent pull-to-refresh: if pulling down (y > startY) AND at the top (scrollTop <= 0)
+        if (y > startY && root.scrollTop <= 0) {
+          e.preventDefault();
+        }
       }, {passive: false});
     </script>
   </head>
