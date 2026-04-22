@@ -64,14 +64,14 @@
   }
 
   #root {
-    height: 100vh !important;
-    width: 100vw !important;
+    height: 100%;
+    width: 100%;
     overflow-y: scroll !important; /* Força a barras de rolagem */
     scrollbar-gutter: stable;
     overscroll-behavior-y: none !important;
     -webkit-overflow-scrolling: touch; /* Suaviza rolagem */
     will-change: scroll-position; /* Otimiza performance */
-    touch-action: pan-y !important; /* Garante rolagem vertical sem refresh */
+    touch-action: pan-y; /* Garante rolagem vertical */
   }
 
   /* Scrollbar Styling */
