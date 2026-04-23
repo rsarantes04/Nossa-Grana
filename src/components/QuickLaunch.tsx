@@ -197,7 +197,15 @@ export const QuickLaunch: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
               <p className="text-sm text-gray-medium font-medium">{t('quick.select_category')}</p>
               <div className="grid grid-cols-2 gap-3">
-                {data.categorias.map(c => (
+                {data.categorias
+                  .map(c => ({
+                    ...c,
+                    subcategorias: Array.from(
+                      new Map(c.subcategorias.map(s => [s.nome.toLowerCase().trim(), s])).values()
+                    )
+                  }))
+                  .filter(c => c.ativa)
+                  .map(c => (
                   <button
                     key={c.id}
                     onClick={() => {
@@ -218,7 +226,9 @@ export const QuickLaunch: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             <div className="space-y-4">
               <p className="text-sm text-gray-medium font-medium">{t('quick.select_subcategory')}</p>
               <div className="grid grid-cols-1 gap-2 max-h-64 overflow-y-auto pr-2 no-scrollbar">
-                {selectedCategory?.subcategorias.filter(s => s.ativa).map(s => (
+                {selectedCategory?.subcategorias
+                  .filter(s => s.ativa)
+                  .map(s => (
                   <button
                     key={s.id}
                     onClick={() => {
