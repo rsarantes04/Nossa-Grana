@@ -135,11 +135,16 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     });
 
     // Migration: Ensure lancamentos have dataCriacao
-    const migratedLancamentos = (parsed.lancamentos || []).map((l: any) => ({
-      ...l,
-      dataCriacao: l.dataCriacao || l.dataEdicao || l.data || new Date(l.ano, l.mes, l.dia || 1).toISOString(),
-      valor: roundCurrency(l.valor)
-    }));
+    const migratedLancamentos = (parsed.lancamentos || []).map((l: any) => {
+      const category = migratedCategories.find((c: any) => c.id === l.categoriaId);
+      const subcategory = category?.subcategorias.find((s: any) => s.id === l.subcategoriaId);
+
+      return {
+        ...l,
+        dataCriacao: l.dataCriacao || l.dataEdicao || l.data || new Date(l.ano, l.mes, l.dia || 1).toISOString(),
+        valor: roundCurrency(l.valor)
+      };
+    });
 
     // Check if DÍVIDAS exists, if not, add it from DEFAULT_CATEGORIES
     const hasDividas = migratedCategories.some((c: any) => c.nome === 'DÍVIDAS');

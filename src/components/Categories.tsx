@@ -34,6 +34,12 @@ export const Categories: React.FC = () => {
 
   const filteredCategories = useMemo(() => {
     return data.categorias
+      .map(c => ({
+        ...c,
+        subcategorias: Array.from(
+          new Map(c.subcategorias.map(s => [s.nome.toLowerCase().trim(), s])).values()
+        )
+      }))
       .filter(c => {
         const matchesSearch = c.nome.toLowerCase().includes(search.toLowerCase()) ||
           c.subcategorias.some(s => s.nome.toLowerCase().includes(search.toLowerCase()));
