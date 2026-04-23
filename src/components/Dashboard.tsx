@@ -313,12 +313,23 @@ export const Dashboard: React.FC<DashboardProps> = () => {
     
     return data.lancamentos
       .filter(l => {
-        const lDate = l.data ? parseISO(l.data) : new Date(l.ano, l.mes, l.dia || 1);
+        const isCC = l.formaPagamento === 'Cartão de Crédito';
+        const targetYear = isCC && l.anoCobranca !== undefined ? l.anoCobranca : l.ano;
+        const targetMonth = isCC && l.mesCobranca !== undefined ? l.mesCobranca : l.mes;
+        
+        const lDate = new Date(targetYear, targetMonth, l.dia || 1);
         return isWithinInterval(lDate, { start, end });
       })
       .sort((a, b) => {
-        const dateA = a.data ? parseISO(a.data).getTime() : new Date(a.ano, a.mes, a.dia || 1).getTime();
-        const dateB = b.data ? parseISO(b.data).getTime() : new Date(b.ano, b.mes, b.dia || 1).getTime();
+        const getEffectiveDate = (l: Lancamento) => {
+          const isCC = l.formaPagamento === 'Cartão de Crédito';
+          const targetYear = isCC && l.anoCobranca !== undefined ? l.anoCobranca : l.ano;
+          const targetMonth = isCC && l.mesCobranca !== undefined ? l.mesCobranca : l.mes;
+          return new Date(targetYear, targetMonth, l.dia || 1).getTime();
+        };
+
+        const dateA = getEffectiveDate(a);
+        const dateB = getEffectiveDate(b);
         
         if (dateB !== dateA) return dateB - dateA;
         
@@ -356,16 +367,14 @@ export const Dashboard: React.FC<DashboardProps> = () => {
       // Calculate Realized
       const realized = data.lancamentos
         .filter(l => {
-          const matchYear = l.ano === filterYear;
-          const matchMonth = filterMonth === 'all' ? true : l.mes === filterMonth;
+          const isCC = l.formaPagamento === 'Cartão de Crédito';
+          const lYear = isCC && l.anoCobranca !== undefined ? l.anoCobranca : l.ano;
+          const lMonth = isCC && l.mesCobranca !== undefined ? l.mesCobranca : l.mes;
+          
+          const matchYear = lYear === filterYear;
+          const matchMonth = filterMonth === 'all' ? true : lMonth === filterMonth;
           const matchCat = l.categoriaId === cat.id;
           const matchSub = filterSubcategory === 'all' ? true : l.subcategoriaId === filterSubcategory;
-          
-          // If viewing all months, exclude future ones from "Realized" (they are "Predicted")
-          if (filterMonth === 'all') {
-            const isFuture = l.ano > currentYear || (l.ano === currentYear && l.mes > currentMonth);
-            if (isFuture) return false;
-          }
           
           return matchYear && matchMonth && matchCat && matchSub && l.tipo === 'realizado';
         })
@@ -403,8 +412,12 @@ export const Dashboard: React.FC<DashboardProps> = () => {
         .map(sub => {
           const subRealized = data.lancamentos
             .filter(l => {
-              const matchYear = l.ano === filterYear;
-              const matchMonth = filterMonth === 'all' ? true : l.mes === filterMonth;
+              const isCC = l.formaPagamento === 'Cartão de Crédito';
+              const lYear = isCC && l.anoCobranca !== undefined ? l.anoCobranca : l.ano;
+              const lMonth = isCC && l.mesCobranca !== undefined ? l.mesCobranca : l.mes;
+              
+              const matchYear = lYear === filterYear;
+              const matchMonth = filterMonth === 'all' ? true : lMonth === filterMonth;
               return matchYear && matchMonth && l.subcategoriaId === sub.id && l.tipo === 'realizado';
             })
             .reduce((acc, l) => acc + l.valor, 0);

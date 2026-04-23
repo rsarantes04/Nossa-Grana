@@ -1,12 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useFinance } from '../contexts/FinanceContext';
 import { X, Check, Calendar, CreditCard, AlignLeft, Wallet, Info, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { format, parseISO } from 'date-fns';
-import { useMemo } from 'react';
+import { format, parseISO, addMonths } from 'date-fns';
 import { PaymentMethod } from '../types';
 import { CurrencyInput } from './CurrencyInput';
 import { useTranslation } from '../i18n/useTranslation';
+import { calcularDatasCobranca } from '../lib/cartaoUtils';
+import { cn } from '../lib/utils';
 
 export const QuickLaunch: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const { data, addLancamento, addParcelamento } = useFinance();
@@ -22,8 +23,29 @@ export const QuickLaunch: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     observacao: '',
     formaPagamento: 'Dinheiro' as PaymentMethod,
     isParcelado: false,
-    numParcelas: '2'
+    numParcelas: '2',
+    cartaoId: '',
   });
+
+  const [calcResult, setCalcResult] = useState<{faturaDisplay: string, cobrancaMes: string, cobrancaAno: number, isAntesFechamento: boolean} | null>(null);
+
+  useEffect(() => {
+    if (formData.formaPagamento === 'Cartão de Crédito' && formData.cartaoId) {
+       const cartao = data.cartoes?.find(c => c.id === formData.cartaoId);
+       if (cartao) {
+         const { mesLancamento, anoLancamento } = calcularDatasCobranca(cartao, formData.data);
+         const date = parseISO(formData.data);
+         setCalcResult({
+           faturaDisplay: format(new Date(date.getFullYear(), date.getMonth() + (date.getDate() < cartao.diaFechamento ? 0 : 1), 1), 'MM/yyyy'),
+           cobrancaMes: mesLancamento + 1,
+           cobrancaAno: anoLancamento,
+           isAntesFechamento: date.getDate() < cartao.diaFechamento
+         });
+       }
+    } else {
+      setCalcResult(null);
+    }
+  }, [formData.formaPagamento, formData.cartaoId, formData.data, data.cartoes]);
 
   const selectedCategory = data.categorias.find(c => c.id === formData.catId);
   const isDebt = selectedCategory?.nome === 'DÍVIDAS';
@@ -62,27 +84,40 @@ export const QuickLaunch: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const handleSave = () => {
     const valor = parseFloat(formData.valor) || 0;
     const date = parseISO(formData.data);
+    let extraFields = {};
+
+    if (formData.formaPagamento === 'Cartão de Crédito' && formData.cartaoId && calcResult) {
+      extraFields = {
+        cartaoId: formData.cartaoId,
+        dataCompra: formData.data,
+        mes: calcResult.cobrancaMes - 1,
+        ano: calcResult.cobrancaAno
+      };
+    }
     
     if (formData.isParcelado) {
       const numParcelas = parseInt(formData.numParcelas);
+      const { mes: mesInicial, ano: anoInicial } = (extraFields as any) || { mes: date.getMonth(), ano: date.getFullYear() };
+      
       addParcelamento({
         descricao: formData.descricao || 'Compra Parcelada',
         valorTotal: valor,
         diaVencimento: date.getDate(),
         dataInicio: formData.data,
-        dataFim: format(new Date(date.getFullYear(), date.getMonth() + numParcelas - 1, date.getDate()), 'yyyy-MM-dd'),
+        dataFim: format(addMonths(new Date(anoInicial, mesInicial, 1), numParcelas - 1), 'yyyy-MM-dd'),
         statusAtivo: true,
         categoriaId: formData.catId,
         subcategoriaId: formData.subcatId,
         formaPagamento: formData.formaPagamento,
         valorParcela: valor / numParcelas,
         totalParcelas: numParcelas,
-        tipo: selectedCategory?.tipo || 'despesa'
-      }, numParcelas);
+        tipo: selectedCategory?.tipo || 'despesa',
+        ...extraFields
+      } as any, numParcelas);
     } else {
       addLancamento({
-        ano: date.getFullYear(),
-        mes: date.getMonth(),
+        ano: (extraFields as any).ano || date.getFullYear(),
+        mes: (extraFields as any).mes !== undefined ? (extraFields as any).mes : date.getMonth(),
         dia: date.getDate(),
         data: formData.data,
         descricao: formData.descricao,
@@ -90,7 +125,8 @@ export const QuickLaunch: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         subcategoriaId: formData.subcatId,
         tipo: 'realizado',
         valor: valor,
-        formaPagamento: formData.formaPagamento
+        formaPagamento: formData.formaPagamento,
+        ...extraFields
       });
     }
     onClose();
@@ -240,7 +276,18 @@ export const QuickLaunch: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                     <input 
                       type="date"
                       value={formData.data}
-                      onChange={(e) => setFormData({ ...formData, data: e.target.value })}
+                      onChange={(e) => {
+                        const newDate = e.target.value;
+                        let updatedFormData = { ...formData, data: newDate };
+                        if (formData.formaPagamento === 'Cartão de Crédito' && formData.cartaoId) {
+                          const cartao = data.cartoes?.find(c => c.id === formData.cartaoId);
+                          if (cartao) {
+                             const { mesLancamento, anoLancamento } = calcularDatasCobranca(cartao, newDate);
+                             updatedFormData = { ...updatedFormData, mes: mesLancamento, ano: anoLancamento };
+                          }
+                        }
+                        setFormData(updatedFormData);
+                      }}
                       className="w-full pl-12 pr-4 py-4 bg-white-off border border-gray-soft rounded-2xl text-sm outline-none focus:ring-2 focus:ring-gold-principal text-navy-principal"
                     />
                   </div>
@@ -261,6 +308,37 @@ export const QuickLaunch: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                     </select>
                   </div>
                 </div>
+
+                {formData.formaPagamento === 'Cartão de Crédito' && (
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-gray-light uppercase tracking-widest">Cartão utilizado</label>
+                    <select 
+                      value={formData.cartaoId}
+                      onChange={(e) => setFormData({ ...formData, cartaoId: e.target.value })}
+                      className="w-full p-4 bg-white-off border border-gray-soft rounded-2xl text-sm outline-none focus:ring-2 focus:ring-gold-principal text-navy-principal"
+                    >
+                      <option value="">Selecione um cartão</option>
+                      {data.cartoes?.map(c => <option key={c.id} value={c.id}>{c.nome} ({c.banco})</option>)}
+                    </select>
+                  </div>
+                )}
+
+                {calcResult && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="p-4 bg-[#0F1A2E] text-white-pure rounded-2xl border border-gold-light/20 space-y-2"
+                  >
+                    <p className="text-xs text-gray-light uppercase tracking-widest font-bold">Resumo da Cobrança</p>
+                    <p className="text-sm font-bold">Compra em {format(parseISO(formData.data), 'dd/MM')} → Fatura {calcResult.faturaDisplay}</p>
+                    <div className={cn("text-lg font-black flex items-center justify-between", calcResult.isAntesFechamento ? "text-green-success" : "text-gold-principal")}>
+                      <span>Cobrado em {calcResult.cobrancaMes}/{calcResult.cobrancaAno}</span>
+                      <span className={cn("text-[10px] uppercase tracking-wider px-2 py-1 rounded-full", calcResult.isAntesFechamento ? "bg-green-success/20" : "bg-gold-principal/20")}>
+                        {calcResult.isAntesFechamento ? 'Antes do fechamento' : 'Após fechamento'}
+                      </span>
+                    </div>
+                  </motion.div>
+                )}
 
                 <div className="flex items-center justify-between p-4 bg-white-off rounded-2xl border border-gray-soft">
                   <div className="flex items-center gap-3">

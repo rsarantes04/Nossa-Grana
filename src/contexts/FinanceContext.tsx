@@ -39,6 +39,9 @@ interface FinanceContextType {
   addParcelamento: (parcelamento: Omit<Parcelamento, 'id'>, numParcelas: number) => void;
   removeParcelamento: (id: string) => void;
   updateParcelamento: (id: string, updates: Partial<Parcelamento>) => void;
+  addCartao: (cartao: Omit<Cartao, 'id' | 'criadoEm' | 'ativo'>) => void;
+  updateCartao: (id: string, updates: Partial<Cartao>) => void;
+  removeCartao: (id: string) => void;
   updateInstallmentIndividual: (id: string, updates: Partial<Lancamento>) => void;
   updateInstallmentsRemaining: (parcelamentoId: string, fromParcela: number, updates: Partial<Lancamento>, applyToAll: Record<string, boolean>) => void;
   removeInstallmentIndividual: (id: string) => void;
@@ -62,6 +65,7 @@ const INITIAL_DATA: FinanceData = {
   familia: { id: 'default-family', nome: 'Família', moeda: 'BRL' },
   categorias: DEFAULT_CATEGORIES,
   lancamentos: [],
+  cartoes: [],
   parcelamentos: [],
   orcamentosMensais: [],
   dividas: [],
@@ -161,7 +165,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return {
       ...INITIAL_DATA,
       ...parsed,
-      categorias: migratedCategories,
+      categorias: applyCategoryMigration(migratedCategories),
       showDividasWelcome,
       lancamentos: migratedLancamentos,
       logs: [],
@@ -201,6 +205,138 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
     };
   });
+
+  function applyCategoryMigration(migratedCategories: any[]) {
+      function toTitleCase(str: string) {
+          return str.toLowerCase().split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+      }
+
+      // 1. Ensure 'GASTOS COM A CASA' exists
+      const hasCasa = migratedCategories.some((c: any) => c.nome.toUpperCase() === 'GASTOS COM A CASA');
+      if (!hasCasa) {
+          const defaultCasa = DEFAULT_CATEGORIES.find(c => c.nome.toUpperCase() === 'GASTOS COM A CASA');
+          if (defaultCasa) migratedCategories.push(defaultCasa);
+      }
+
+      // 2. Update 'DOAÇÃO E GENEROSIDADE' subcategories
+      const doacaoCat = migratedCategories.find((c: any) => c.nome.toUpperCase() === 'DOAÇÃO E GENEROSIDADE');
+      if (doacaoCat) {
+          const dizimoSub = doacaoCat.subcategorias.find((s: any) => s.nome.toLowerCase() === 'dízimo');
+          if (dizimoSub) dizimoSub.nome = 'Dízimo e ofertas';
+          
+          const hasRifas = doacaoCat.subcategorias.some((s: any) => s.nome.toLowerCase() === 'rifas');
+          if (!hasRifas) {
+              doacaoCat.subcategorias.push({
+                  id: crypto.randomUUID(),
+                  nome: 'Rifas',
+                  ativa: true,
+                  ordem: doacaoCat.subcategorias.length,
+                  dataCriacao: new Date().toISOString(),
+                  categoriaPaiId: doacaoCat.id
+              });
+          }
+      }
+
+      // 3. Update 'SONHOS & PROJETOS' subcategories
+      const sonhosCat = migratedCategories.find((c: any) => c.nome.toUpperCase() === 'SONHOS & PROJETOS');
+      if (sonhosCat) {
+          sonhosCat.subcategorias = [
+              'Viagem a Europa', 'Sítio', 'Abrir empresa', 'Troca de carro', 'Comprar casa', 'Cirurgia plástica'
+          ].map((name, idx) => ({
+              id: crypto.randomUUID(),
+              nome: name,
+              ativa: true,
+              ordem: idx,
+              dataCriacao: new Date().toISOString(),
+              categoriaPaiId: sonhosCat.id
+          }));
+      }
+
+      // 4. Update 'INVESTIMENTOS' subcategories
+      const investCat = migratedCategories.find((c: any) => c.nome.toUpperCase() === 'INVESTIMENTOS');
+      if (investCat) {
+          const keepSubcats = investCat.subcategorias.filter((s: any) => s.nome.toLowerCase() !== 'cdi');
+          const newSubs = ['ETFs', 'Criptomoedas', 'Moeda estrangeira', 'Ouro'];
+          investCat.subcategorias = [
+            ...keepSubcats.map((s: any, idx: number) => ({ ...s, ordem: idx })),
+            ...newSubs.map((name, idx) => ({
+                id: crypto.randomUUID(),
+                nome: name,
+                ativa: true,
+                ordem: keepSubcats.length + idx,
+                dataCriacao: new Date().toISOString(),
+                categoriaPaiId: investCat.id
+            }))
+          ];
+      }
+
+      // 5. Update various categories with new subcategories
+      const updateSubcats = (catName: string, newSubs: string[], append: boolean = true) => {
+          const cat = migratedCategories.find((c: any) => c.nome.toUpperCase() === catName.toUpperCase());
+          if (cat) {
+              const existingNames = cat.subcategorias.map((s: any) => s.nome.toLowerCase());
+              const subsToAdd = newSubs.filter(name => !existingNames.includes(name.toLowerCase()));
+              
+              if (subsToAdd.length > 0) {
+                  const baseOrder = append ? cat.subcategorias.length : 0;
+                  const newSubObjs = subsToAdd.map((name, idx) => ({
+                      id: crypto.randomUUID(),
+                      nome: name,
+                      ativa: true,
+                      ordem: baseOrder + idx,
+                      dataCriacao: new Date().toISOString(),
+                      categoriaPaiId: cat.id
+                  }));
+                  
+                  if (append) cat.subcategorias.push(...newSubObjs);
+                  else cat.subcategorias = [...newSubObjs, ...cat.subcategorias];
+              }
+          }
+      };
+
+      updateSubcats('HABITAÇÃO', ['Condomínio', 'Detetização', 'Feira', 'Açougue', 'Mudança', 'Seguro']);
+      updateSubcats('TRANSPORTE', ['Flanelinha', 'Equipamentos', 'Passagem de ônibus', 'Borracharia', 'Transferência', 'Multas']);
+      updateSubcats('DESPESAS PESSOAIS', ['Anuidades de conselhos', 'Emissão de documentos']);
+      updateSubcats('LAZER', ['Cafeteria/sorveteria', 'Almoços', 'Lanches', 'Cinema', 'Shows/jogos', 'Aluguel de carro']);
+      updateSubcats('EDUCAÇÃO', ['Palestras']);
+
+      // 6. Ensure 'IMPOSTOS E APOSENTADORIA' exists
+      const catName = 'IMPOSTOS E APOSENTADORIA';
+      let impCat = migratedCategories.find((c: any) => c.nome.toUpperCase() === catName);
+      if (!impCat) {
+          impCat = {
+              id: crypto.randomUUID(),
+              nome: catName,
+              tipo: 'despesa',
+              icone: '🏛️',
+              cor: '#7F8C8D',
+              ordem: migratedCategories.length,
+              ativa: true,
+              dataCriacao: new Date().toISOString(),
+              dataAtualizacao: new Date().toISOString(),
+              subcategorias: []
+          };
+          migratedCategories.push(impCat);
+      }
+      updateSubcats(catName, ['Contribuição à previdência', 'Imposto de renda', 'Previdência complementar']);
+
+      const habCat = migratedCategories.find((c: any) => c.nome.toUpperCase() === 'HABITAÇÃO');
+      if (habCat) {
+          habCat.subcategorias = habCat.subcategorias.filter(
+              (s: any) => s.nome.toLowerCase() !== 'financiamento imobiliário'
+          );
+      }
+
+      // Final formatting pass to ensure title case consistency
+      migratedCategories.forEach(cat => {
+          cat.nome = cat.nome.toUpperCase();
+          cat.subcategorias.forEach((sub: any) => {
+              sub.nome = toTitleCase(sub.nome);
+          });
+      });
+
+      return migratedCategories;
+  }
 
   useEffect(() => {
     // Apply font size
@@ -1335,6 +1471,15 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const valorParcela = roundCurrency(roundedTotal / numParcelas);
     const startDate = parseISO(parcelamento.dataInicio);
     
+    // Check if parcelamento carries credit card billing info
+    const cobrancaMes = (parcelamento as any).mes;
+    const cobrancaAno = (parcelamento as any).ano;
+    
+    // Set start date to the correct billing month if credit card info exists
+    const effectiveStartDate = (cobrancaMes !== undefined && cobrancaAno !== undefined) 
+      ? new Date(cobrancaAno, cobrancaMes, startDate.getDate())
+      : startDate;
+
     const newParcelamento: Parcelamento = {
       ...parcelamento,
       id: parcelamentoId,
@@ -1348,7 +1493,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     const newLancamentos: Lancamento[] = [];
     for (let i = 0; i < numParcelas; i++) {
-      const currentDate = addMonths(startDate, i);
+      const currentDate = addMonths(effectiveStartDate, i);
       newLancamentos.push({
         id: crypto.randomUUID(),
         ano: currentDate.getFullYear(),
@@ -1363,7 +1508,12 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         valor: valorParcela,
         parcelamentoId: parcelamentoId,
         numeroParcela: i + 1,
-        totalParcelas: numParcelas
+        totalParcelas: numParcelas,
+        formaPagamento: parcelamento.formaPagamento,
+        cartaoId: (parcelamento as any).cartaoId,
+        dataCompra: (parcelamento as any).dataCompra,
+        mesCobranca: (parcelamento as any).mes,
+        anoCobranca: (parcelamento as any).ano
       });
     }
 
@@ -1386,6 +1536,29 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       };
       return syncSonhosProjetos(newData);
     });
+  };
+
+  const addCartao = (cartao: Omit<Cartao, 'id' | 'criadoEm' | 'ativo'>) => {
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    setData(prev => ({
+      ...prev,
+      cartoes: [...(prev.cartoes || []), { ...cartao, id, criadoEm: now, ativo: true }]
+    }));
+  };
+
+  const updateCartao = (id: string, updates: Partial<Cartao>) => {
+    setData(prev => ({
+      ...prev,
+      cartoes: (prev.cartoes || []).map(c => c.id === id ? { ...c, ...updates } : c)
+    }));
+  };
+
+  const removeCartao = (id: string) => {
+    setData(prev => ({
+      ...prev,
+      cartoes: (prev.cartoes || []).filter(c => c.id !== id)
+    }));
   };
 
   const updateParcelamento = (id: string, updates: Partial<Parcelamento>) => {
@@ -1716,6 +1889,9 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       addParcelamento,
       removeParcelamento,
       updateParcelamento,
+      addCartao,
+      updateCartao,
+      removeCartao,
       updateInstallmentIndividual,
       updateInstallmentsRemaining,
       removeInstallmentIndividual,

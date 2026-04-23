@@ -121,6 +121,7 @@ export const translations = {
     "budget.realized": "Realizado",
     "budget.subcategories": "Subcategorias",
     "budget.noSubcategories": "Nenhuma subcategoria ativa.",
+    "budget.detail": "Detalhar",
 
     // Categories
     "categories.title": "Categorias",
@@ -733,6 +734,7 @@ export const translations = {
     "budget.realized": "Realized",
     "budget.subcategories": "Subcategories",
     "budget.noSubcategories": "No active subcategories.",
+    "budget.detail": "Detail",
 
     // Categories
     "categories.title": "Categories",
@@ -1338,6 +1340,7 @@ export const translations = {
     "budget.realized": "Realizado",
     "budget.subcategories": "Subcategorías",
     "budget.noSubcategories": "Ninguna subcategoría activa.",
+    "budget.detail": "Detalle",
     "budget.copy_next": "Copiar al próximo mes",
     "budget.no_budget": "Ningún presupuesto definido para este mes.",
     "budget.set_budget": "Definir Presupuesto",

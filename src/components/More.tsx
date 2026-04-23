@@ -10,6 +10,7 @@ import { DreamsProjects } from './DreamsProjects';
 import { Settings } from './Settings';
 import { Relatorio5Meses } from './Relatorio5Meses';
 import { PatrimonioScreen } from './Patrimonio';
+import { CardManager } from './CardManager';
 
 interface MoreProps {
   initialView?: 'menu';
@@ -20,6 +21,7 @@ export const More: React.FC<MoreProps> = ({ initialView = 'menu', onResetView })
   const { data } = useFinance();
   const { t } = useTranslation();
   const [view, setView] = useState<'menu' | 'sonhos' | 'relatorio' | 'relatorio5' | 'parcelamentos' | 'settings' | 'patrimonio'>(initialView);
+  const [showCards, setShowCards] = useState(false);
 
   const handleBack = () => {
     setView('menu');
@@ -39,11 +41,18 @@ export const More: React.FC<MoreProps> = ({ initialView = 'menu', onResetView })
 
       <div className="grid grid-cols-1 gap-4">
         <MenuButton 
+          icon={<CreditCard className="text-navy-principal" />} 
+          title="Cartões de Crédito" 
+          description="Gerencie seus cartões e faturas"
+          onClick={() => setShowCards(true)}
+        />
+        <MenuButton 
           icon={<List className="text-blue-dark" />} 
           title={t('more.installments.title')} 
           description={t('more.installments.description')}
           onClick={() => setView('parcelamentos')}
         />
+        {showCards && <CardManager onClose={() => setShowCards(false)} />}
         <MenuButton 
           icon={<Target className="text-gold-dark" />} 
           title={t('more.dreams.title')} 

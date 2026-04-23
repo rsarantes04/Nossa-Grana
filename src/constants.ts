@@ -31,7 +31,7 @@ export const DEFAULT_CATEGORIES: Category[] = [
     'Dividendos', 'Pró-Labore', 'Juros / Rendimentos', 'Aluguel Recebido'
   ], 0),
   createCategory('DOAÇÃO E GENEROSIDADE', 'despesa', '🤝', '#FF9500', [
-    'Dízimo', 'Doações', 'Auxílio a entidades'
+    'Dízimo e ofertas', 'Doações', 'Auxílio a entidades', 'Rifas'
   ], 1),
   createCategory('INVESTIMENTOS', 'investimento', '📈', '#5856D6', [
     'Tesouro Direto', 'CDI', 'CDB', 'Ações', 'Fundos de Investimento'
@@ -69,21 +69,23 @@ export const DEFAULT_CATEGORIES: Category[] = [
   createCategory('PET', 'despesa', '🐾', '#A67C52', [
     'Remédios', 'Banho e tosa', 'Plano de saúde', 'Alimentação', 'Vacinas'
   ], 11),
+  createCategory('GASTOS COM A CASA', 'despesa', '🛋️', '#8E44AD', [
+    'Móveis', 'Enxoval', 'Panelas', 'Eletrodomésticos', 'Utilidades domésticas', 'Paisagismo'
+  ], 12),
   createCategory('DESPESAS FINANCEIRAS', 'despesa', '💳', '#1D1D1F', [
     'Mensalidade Cartão de Crédito', 'Mensalidade Conta Bancária', 'Abertura de Crédito', 
     'Empréstimo Pessoal', 'Cheque Especial', 'Juros Bancários'
-  ], 12),
-  createCategory('SONHOS & PROJETOS', 'investimento', '⭐', '#FFD60A', [
-    'Sonho 01', 'Sonho 02', 'Sonho 03', 'Sonho 04', 'Sonho 05', 
-    'Projeto 01', 'Projeto 02', 'Projeto 03', 'Projeto 04', 'Projeto 05'
   ], 13),
+  createCategory('SONHOS & PROJETOS', 'investimento', '⭐', '#FFD60A', [
+    'Viagem a Europa', 'Sítio', 'Abrir empresa', 'Troca de carro', 'Comprar casa', 'Cirurgia plástica'
+  ], 14),
   {
     id: 'cat-dividas-001',
     nome: 'DÍVIDAS',
     tipo: 'despesa',
     icone: '💳',
     cor: '#E74C3C',
-    ordem: 14,
+    ordem: 15,
     ativa: true,
     dataCriacao: new Date().toISOString(),
     dataAtualizacao: new Date().toISOString(),

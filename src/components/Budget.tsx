@@ -17,6 +17,7 @@ export const Budget: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState(startOfMonth(new Date()));
   const [expandedCategories, setExpandedCategories] = useState<string[]>([]);
   const [showTooltip, setShowTooltip] = useState<{ id: string, type: 'cat' | 'sub' } | null>(null);
+  const [detailSubcategory, setDetailSubcategory] = useState<{catId: string, subcatId: string, nome: string} | null>(null);
   const [showWelcome, setShowWelcome] = useState(false);
   const [showCopyConfirm, setShowCopyConfirm] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
@@ -178,6 +179,7 @@ export const Budget: React.FC = () => {
             getRealizado={getRealizado}
             updateOrcamento={updateOrcamento}
             onShowTooltip={(type) => setShowTooltip({ id: category.id, type })}
+            onDetail={(subcatId: string, nome: string) => setDetailSubcategory({ catId: category.id, subcatId, nome })}
           />
         ))}
 
@@ -236,6 +238,49 @@ export const Budget: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Detail Modal */}
+      <AnimatePresence>
+        {detailSubcategory && (
+          <div className="fixed inset-0 bg-navy-dark/60 backdrop-blur-sm z-[100] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white-pure w-full max-w-sm rounded-[32px] p-8 space-y-6 shadow-2xl maxHeight-[80vh] flex flex-col"
+            >
+              <h2 className="text-xl font-serif font-bold text-navy-principal">{detailSubcategory.nome}</h2>
+              
+              <div className="flex-1 overflow-y-auto space-y-3 no-scrollbar">
+                {data.lancamentos
+                  .filter(l => 
+                    l.ano === year && 
+                    l.mes === month && 
+                    l.subcategoriaId === detailSubcategory.subcatId &&
+                    l.tipo === 'realizado'
+                  )
+                  .map(l => (
+                    <div key={l.id} className="flex items-center justify-between p-3 bg-white-off rounded-xl">
+                      <span className="text-sm font-bold text-navy-principal">{l.descricao || 'Sem descrição'}</span>
+                      <div className="text-right">
+                        <p className="text-xs text-gray-medium">{l.dia}/{l.mes + 1}/{l.ano}</p>
+                        <p className="text-sm font-bold text-navy-principal">{formatCurrency(l.valor, lang)}</p>
+                      </div>
+                    </div>
+                  ))
+                }
+              </div>
+
+              <button 
+                onClick={() => setDetailSubcategory(null)}
+                className="w-full py-4 bg-navy-principal text-white-pure rounded-2xl font-bold shadow-lg"
+              >
+                Fechar
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Tooltip Modal */}
       <AnimatePresence>
@@ -343,7 +388,7 @@ export const Budget: React.FC = () => {
 
 const BudgetCategoryItem = ({ 
   category, year, month, isExpanded, onToggle, 
-  getOrcado, getRealizado, updateOrcamento, onShowTooltip 
+  getOrcado, getRealizado, updateOrcamento, onShowTooltip, onDetail 
 }: any) => {
   const { t, lang } = useTranslation();
   
@@ -435,14 +480,12 @@ const BudgetCategoryItem = ({
                 <div key={sub.id} className="space-y-3">
                   <div className="flex items-center justify-between px-2">
                     <span className="text-sm font-bold text-navy-principal">{sub.nome}</span>
-                    {getOrcado(category.id, sub.id) !== null && (
-                      <span className={cn(
-                        "text-[10px] font-bold",
-                        (getOrcado(category.id, sub.id)! - getRealizado(category.id, sub.id)) >= 0 ? "text-green-forest" : "text-red-brick"
-                      )}>
-                        {formatCurrency(getOrcado(category.id, sub.id)! - getRealizado(category.id, sub.id), lang)}
-                      </span>
-                    )}
+                    <button 
+                      onClick={() => onDetail(sub.id, sub.nome)}
+                      className="text-[10px] uppercase font-bold text-gold-principal hover:text-gold-dark transition-colors"
+                    >
+                      {t('budget.detail')}
+                    </button>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <BudgetField 

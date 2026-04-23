@@ -31,6 +31,17 @@ export interface Category {
 
 export type PaymentMethod = 'Dinheiro' | 'Cartão de Crédito' | 'Cartão de Débito' | 'Pix' | 'Boleto';
 
+export interface Cartao {
+  id: string;
+  nome: string;
+  bandeira: 'Visa' | 'Mastercard' | 'Elo' | 'Amex' | 'Hipercard';
+  banco: string;
+  diaFechamento: number;
+  diaVencimento: number;
+  ativo: boolean;
+  criadoEm: string;
+}
+
 export interface Lancamento {
   id: string;
   ano: number;
@@ -48,6 +59,10 @@ export interface Lancamento {
   numeroParcela?: number;
   totalParcelas?: number;
   formaPagamento?: PaymentMethod;
+  cartaoId?: string | null;
+  dataCompra?: string;
+  mesCobranca?: number;
+  anoCobranca?: number;
   dataEdicao?: string;
 }
 
@@ -79,6 +94,10 @@ export interface Parcelamento {
   motivoCancelamento?: string | null;
   observacaoCancelamento?: string | null;
   parcelasEfetivamentePagas?: number;
+  cartaoId?: string | null;
+  dataCompra?: string;
+  mes?: number;
+  ano?: number;
 }
 
 export interface PagamentoDivida {
@@ -224,6 +243,7 @@ export interface FinanceData {
   familia: Familia;
   categorias: Category[];
   lancamentos: Lancamento[];
+  cartoes: Cartao[];
   parcelamentos: Parcelamento[];
   orcamentosMensais: OrcamentoMensal[];
   dividas: Divida[];
