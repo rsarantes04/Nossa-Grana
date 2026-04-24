@@ -167,13 +167,56 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
 
     // Migration: Ensure all fields from INITIAL_DATA exist in the loaded data
-    return {
+    let finalData = {
       ...INITIAL_DATA,
       ...parsed,
       categorias: applyCategoryMigration(migratedCategories),
       showDividasWelcome,
       lancamentos: migratedLancamentos,
       logs: [],
+    };
+    
+    // Merge duplicate categories: "Gastos com casa" vs "Gastos para casa"
+    const normalizedNames = new Map<string, Category[]>();
+    finalData.categorias.forEach(cat => {
+      const normalized = cat.nome.toLowerCase().replace(/ (com|para|de) /g, ' ').trim();
+      if (!normalizedNames.has(normalized)) normalizedNames.set(normalized, []);
+      normalizedNames.get(normalized)!.push(cat);
+    });
+
+    for (const [name, cats] of normalizedNames.entries()) {
+      if (cats.length > 1) {
+        // Keep the one with most subcategories
+        cats.sort((a, b) => b.subcategorias.length - a.subcategorias.length);
+        const keeper = cats[0];
+        const toDelete = cats.slice(1);
+
+        toDelete.forEach(delCat => {
+          // Move subcategories to keeper
+          delCat.subcategorias.forEach(sub => {
+            if (!keeper.subcategorias.some(s => s.nome.toLowerCase().trim() === sub.nome.toLowerCase().trim())) {
+              keeper.subcategorias.push({ ...sub, categoriaPaiId: keeper.id });
+            }
+          });
+
+          // Remap lancamentos
+          finalData.lancamentos = finalData.lancamentos.map(l => 
+            l.categoriaId === delCat.id ? { ...l, categoriaId: keeper.id } : l
+          );
+
+          // Remap orcamentos
+          finalData.orcamentosMensais = finalData.orcamentosMensais.map(o => 
+            o.categoriaId === delCat.id ? { ...o, categoriaId: keeper.id } : o
+          );
+        });
+
+        // Delete from categories
+        finalData.categorias = finalData.categorias.filter(c => !toDelete.some(td => td.id === c.id));
+      }
+    }
+
+    return {
+      ...finalData,
       parcelamentos: (parsed.parcelamentos || []).map((p: any) => ({
         ...p,
         valorTotal: roundCurrency(p.valorTotal),
@@ -1238,59 +1281,45 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const syncSonhosProjetos = (currentData: FinanceData): FinanceData => {
-    const now = new Date();
-    const currentYear = now.getFullYear();
-    const currentMonth = now.getMonth();
+    let categories = [...currentData.categorias];
+    let lancamentos = [...currentData.lancamentos];
+    let sonhosProjetosList = [...currentData.sonhosProjetos];
 
-    const updatedSonhos = currentData.sonhosProjetos.map(sonho => {
-      const relatedLancamentos = currentData.lancamentos.filter(l => l.subcategoriaId === sonho.subcategoriaId);
+    const sonhosCategories = categories.filter(c => c.nome.toUpperCase() === 'SONHOS & PROJETOS');
+    
+    if (sonhosCategories.length > 0) {
+      const keeper = sonhosCategories[0];
+      const toDelete = sonhosCategories.slice(1);
       
-      const aportes = relatedLancamentos.map(l => {
-        const isFuture = l.ano > currentYear || (l.ano === currentYear && l.mes > currentMonth);
-        const status = l.tipo === 'realizado' ? (isFuture ? 'previsto' : 'confirmado') : 'previsto';
-        
-        return {
-          lancamentoId: l.id,
-          data: l.data || new Date(l.ano, l.mes, l.dia || 1).toISOString(),
-          valor: l.valor,
-          status: status as any,
-          parcelamentoId: l.parcelamentoId,
-          numeroParcela: l.numeroParcela,
-          totalParcelas: l.totalParcelas
-        };
-      }).sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime());
-
-      const valorAcumulado = aportes
-        .filter(a => a.status === 'confirmado')
-        .reduce((acc, a) => acc + a.valor, 0);
-
-      const progresso = sonho.valorMeta > 0 ? valorAcumulado / sonho.valorMeta : 0;
-      const conquistado = progresso >= 1;
-
-      // Estimativa de conclusão baseada na média dos últimos 3 aportes confirmados
-      const ultimosAportes = aportes.filter(a => a.status === 'confirmado').slice(0, 3);
-      const mediaAporte = ultimosAportes.length > 0 
-        ? ultimosAportes.reduce((acc, a) => acc + a.valor, 0) / ultimosAportes.length 
-        : 0;
+      keeper.subcategorias = [];
+      categories = categories.filter(c => c.id === keeper.id || !toDelete.some(del => del.id === c.id));
       
-      let estimativaConclusao = undefined;
-      if (mediaAporte > 0 && !conquistado && sonho.valorMeta > 0) {
-        const restante = sonho.valorMeta - valorAcumulado;
-        const mesesRestantes = Math.ceil(restante / mediaAporte);
-        estimativaConclusao = addMonths(now, mesesRestantes).toISOString();
-      }
+      // Update lancamentos reference to keeperId, remove subcategoriaId if it was from deleted subcats
+      lancamentos = lancamentos.map(l => {
+          if (toDelete.some(delCat => delCat.id === l.categoriaId)) {
+             return { ...l, categoriaId: keeper.id, subcategoriaId: undefined };
+          }
+          if (keeper.id === l.categoriaId) {
+             return { ...l, subcategoriaId: undefined };
+          }
+          return l;
+      });
+      
+      sonhosProjetosList = [];
+    }
 
-      return {
-        ...sonho,
-        valorAcumulado,
-        progresso,
-        conquistado,
-        aportes,
-        estimativaConclusao
-      };
+    const updatedSonhos = sonhosProjetosList.map(sonho => {
+      const aportes = lancamentos.filter(l => l.subcategoriaId === sonho.subcategoriaId).map(l => ({
+        lancamentoId: l.id,
+        data: l.data || new Date(l.ano, l.mes, l.dia || 1).toISOString(),
+        valor: l.valor,
+        status: (l.tipo === 'realizado' ? 'confirmado' : 'previsto') as any,
+      }));
+      const valorAcumulado = aportes.reduce((acc, a) => acc + a.valor, 0);
+      return { ...sonho, valorAcumulado, aportes };
     });
 
-    return { ...currentData, sonhosProjetos: updatedSonhos };
+    return { ...currentData, categorias, lancamentos, sonhosProjetos: updatedSonhos };
   };
 
   const addSonhoProjeto = (sonho: Omit<SonhoProjeto, 'id' | 'valorAcumulado' | 'progresso' | 'aportes' | 'subcategoriaId' | 'conquistado' | 'origemCriacao'>) => {
@@ -1517,8 +1546,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         formaPagamento: parcelamento.formaPagamento,
         cartaoId: (parcelamento as any).cartaoId,
         dataCompra: (parcelamento as any).dataCompra,
-        mesCobranca: (parcelamento as any).mes,
-        anoCobranca: (parcelamento as any).ano
+        mesCobranca: currentDate.getMonth(),
+        anoCobranca: currentDate.getFullYear()
       });
     }
 

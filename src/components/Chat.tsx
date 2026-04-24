@@ -2,9 +2,10 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useFinance } from '../contexts/FinanceContext';
 import { getAssistantResponse } from '../services/gemini';
 import { motion, AnimatePresence } from 'motion/react';
-import { Send, X, Bot, User, Loader2 } from 'lucide-react';
+import { Send, X, Bot, User, Loader2, Wifi, WifiOff } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { cn } from '../lib/utils';
+import { useNetwork } from '../hooks/useNetwork';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -13,6 +14,7 @@ interface Message {
 
 export const Chat: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const { data } = useFinance();
+  const isOnline = useNetwork();
   const [messages, setMessages] = useState<Message[]>([
     { role: 'assistant', content: `Olá! Sou seu assistente do Nossa Grana. Como posso ajudar a **${data.familia.nome}** hoje?` }
   ]);
@@ -27,7 +29,7 @@ export const Chat: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   }, [messages, isLoading]);
 
   const handleSend = async () => {
-    if (!input.trim() || isLoading) return;
+    if (!input.trim() || isLoading || !isOnline) return;
 
     const userMsg = input.trim();
     setInput('');
@@ -59,7 +61,10 @@ export const Chat: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           </div>
           <div>
             <h2 className="font-bold text-gray-900">Assistente Nossa Grana</h2>
-            <p className="text-[10px] text-[#00875A] font-bold uppercase tracking-widest">Online</p>
+            <div className={cn("flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest", isOnline ? "text-[#00875A]" : "text-red-500")}>
+              {isOnline ? <Wifi size={10} /> : <WifiOff size={10} />}
+              {isOnline ? "Online" : "Offline"}
+            </div>
           </div>
         </div>
         <button onClick={onClose} className="p-2 hover:bg-white/50 rounded-full transition-colors">
@@ -109,18 +114,24 @@ export const Chat: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
       {/* Input */}
       <div className="p-6 border-t border-gray-100 bg-white sm:rounded-b-[32px]">
+        {!isOnline && (
+          <div className="mb-4 p-3 bg-red-50 text-red-700 text-xs rounded-xl text-center font-medium">
+            Você está offline. O assistente está indisponível agora.
+          </div>
+        )}
         <div className="flex gap-2">
           <input 
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-            placeholder="Pergunte algo..."
-            className="flex-1 p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-[#00875A] transition-all text-sm"
+            placeholder={isOnline ? "Pergunte algo..." : "Assistente indisponível offline..."}
+            disabled={!isOnline || isLoading}
+            className="flex-1 p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-[#00875A] transition-all text-sm disabled:opacity-50"
           />
           <button 
             onClick={handleSend}
-            disabled={!input.trim() || isLoading}
+            disabled={!input.trim() || isLoading || !isOnline}
             className="p-4 bg-[#00875A] text-white rounded-2xl shadow-lg shadow-emerald-100 hover:bg-[#00704a] disabled:opacity-50 transition-all"
           >
             <Send size={20} />

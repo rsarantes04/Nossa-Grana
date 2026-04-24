@@ -50,19 +50,43 @@ export const Relatorio5Meses = ({ onBack }: Relatorio5MesesProps) => {
   const [showSubcategories, setShowSubcategories] = useState(true);
   const [viewMode, setViewMode] = useState<'absolute' | 'percent'>('absolute');
   const [exporting, setExporting] = useState(false);
+  const [periodOption, setPeriodOption] = useState<'last5' | 'current2before' | 'current4after'>('last5');
 
   const reportData = useMemo(() => {
     const months: { month: number; year: number; label: string }[] = [];
     const now = new Date();
-    const currM = now.getMonth();
-    const currY = now.getFullYear();
+    
+    let startMonth = 0;
+    let startYear = 0;
+    let numMonths = 5;
 
-    for (let i = -4; i <= 0; i++) {
-      let m = currM + i;
-      let y = currY;
-      while (m < 0) { m += 12; y -= 1; }
-      while (m > 11) { m -= 12; y += 1; }
-      months.push({ month: m, year: y, label: `${y}-${String(m + 1).padStart(2, '0')}` });
+    if (periodOption === 'last5') {
+        // 5 últimos meses (incluindo o atual)
+        for (let i = -4; i <= 0; i++) {
+        let m = now.getMonth() + i;
+        let y = now.getFullYear();
+        while (m < 0) { m += 12; y -= 1; }
+        while (m > 11) { m -= 12; y += 1; }
+        months.push({ month: m, year: y, label: `${y}-${String(m + 1).padStart(2, '0')}` });
+        }
+    } else if (periodOption === 'current2before') {
+        // Atual, 2 meses antes, 2 meses depois
+        for (let i = -2; i <= 2; i++) {
+            let m = now.getMonth() + i;
+            let y = now.getFullYear();
+            while (m < 0) { m += 12; y -= 1; }
+            while (m > 11) { m -= 12; y += 1; }
+            months.push({ month: m, year: y, label: `${y}-${String(m + 1).padStart(2, '0')}` });
+        }
+    } else if (periodOption === 'current4after') {
+        // Atual e os 4 subsequentes
+        for (let i = 0; i <= 4; i++) {
+            let m = now.getMonth() + i;
+            let y = now.getFullYear();
+            while (m < 0) { m += 12; y -= 1; }
+            while (m > 11) { m -= 12; y += 1; }
+            months.push({ month: m, year: y, label: `${y}-${String(m + 1).padStart(2, '0')}` });
+        }
     }
 
     const categories: CategoriaData[] = financeData.categorias
@@ -120,7 +144,7 @@ export const Relatorio5Meses = ({ onBack }: Relatorio5MesesProps) => {
       meses: months.map(m => m.label),
       categorias: categories
     };
-  }, [financeData]);
+  }, [financeData, periodOption]);
 
   const toggleCat = (id: string) => {
     setExpandedCats(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
@@ -163,18 +187,37 @@ export const Relatorio5Meses = ({ onBack }: Relatorio5MesesProps) => {
         onclone: (clonedDoc) => {
           const reportElement = clonedDoc.getElementById('report-content');
           if (reportElement) {
-            // Remove shadows and other problematic TW4 features for html2canvas
+            // Remove shadows and other problematic TW4 features
             const problematic = reportElement.querySelectorAll('.shadow-sm, .shadow-md, .shadow-lg, .shadow-xl, .shadow-2xl, .shadow-inner');
             problematic.forEach(el => {
               (el as HTMLElement).style.boxShadow = 'none';
             });
+
+            // Force mobile-like layout
+            reportElement.style.width = '100%';
+            reportElement.style.maxWidth = '400px'; // Force mobile width
+            reportElement.style.margin = '0 auto';
+            
+            const table = reportElement.querySelector('table');
+            if (table) {
+                table.style.minWidth = '0';
+                table.style.width = '100%';
+                
+                // Reduce padding for dense mobile look
+                const cells = table.querySelectorAll('th, td');
+                cells.forEach(el => {
+                    (el as HTMLElement).style.padding = '4px 2px';
+                    (el as HTMLElement).style.fontSize = '8px';
+                });
+            }
           }
 
           // Force replace any oklch/oklab in the document stylesheets to prevent html2canvas parser crash
           try {
             for (let i = 0; i < clonedDoc.styleSheets.length; i++) {
               const sheet = clonedDoc.styleSheets[i];
-              const rules = sheet.cssRules || (sheet as any).rules;
+              if (!sheet) continue;
+              const rules = (sheet as any).cssRules || (sheet as any).rules;
               if (!rules) continue;
               
               for (let j = rules.length - 1; j >= 0; j--) {
@@ -271,7 +314,21 @@ export const Relatorio5Meses = ({ onBack }: Relatorio5MesesProps) => {
 
       {/* Filters */}
       <div className="bg-white-pure p-6 rounded-[32px] border border-gray-soft shadow-sm space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="space-y-2">
+            <label className="text-[10px] text-gray-light font-bold uppercase tracking-widest flex items-center gap-1">
+              <Filter size={10} /> Período
+            </label>
+            <select 
+              value={periodOption}
+              onChange={(e) => setPeriodOption(e.target.value as any)}
+              className="w-full p-3 bg-white-off border border-gray-soft rounded-2xl text-sm font-bold outline-none focus:ring-2 focus:ring-gold-principal text-navy-principal"
+            >
+              <option value="last5">5 Últimos</option>
+              <option value="current2before">Atual +/- 2 meses</option>
+              <option value="current4after">Atual + 4 meses</option>
+            </select>
+          </div>
           <div className="space-y-2">
             <label className="text-[10px] text-gray-light font-bold uppercase tracking-widest flex items-center gap-1">
               <Filter size={10} /> {t('dashboard.category')}
