@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useFinance } from '../contexts/FinanceContext';
 import { useTranslation } from '../i18n/useTranslation';
-import { formatCurrency, cn } from '../lib/utils';
+import { formatCurrency, cn, toCents, fromCents, prepareFinanceValue } from '../lib/utils';
 import { Patrimonio, PatrimonioCategory } from '../types';
 import { 
   ChevronRight, 
@@ -67,10 +67,10 @@ export const PatrimonioScreen: React.FC<PatrimonioProps> = ({ onBack }) => {
   const patrimonio = data.patrimonio || [];
 
   const totals = useMemo(() => {
-    const total = patrimonio.reduce((acc, item) => acc + item.valorAquisicao, 0);
-    const imoveis = patrimonio.filter(i => i.categoria === 'imovel').reduce((acc, item) => acc + item.valorAquisicao, 0);
-    const veiculos = patrimonio.filter(i => i.categoria === 'veiculo').reduce((acc, item) => acc + item.valorAquisicao, 0);
-    const investimentos = patrimonio.filter(i => i.categoria === 'investimento').reduce((acc, item) => acc + item.valorAquisicao, 0);
+    const total = fromCents(patrimonio.reduce((acc, item) => acc + toCents(item.valorAquisicao), 0));
+    const imoveis = fromCents(patrimonio.filter(i => i.categoria === 'imovel').reduce((acc, item) => acc + toCents(item.valorAquisicao), 0));
+    const veiculos = fromCents(patrimonio.filter(i => i.categoria === 'veiculo').reduce((acc, item) => acc + toCents(item.valorAquisicao), 0));
+    const investimentos = fromCents(patrimonio.filter(i => i.categoria === 'investimento').reduce((acc, item) => acc + toCents(item.valorAquisicao), 0));
     return { total, imoveis, veiculos, investimentos };
   }, [patrimonio]);
 
@@ -330,18 +330,27 @@ const PatrimonioModal = ({ item, onClose, onSave, t, lang }: any) => {
   const [valor, setValor] = useState(item?.valorAquisicao?.toString() || '');
   const [data, setData] = useState(item?.dataAquisicao || new Date().toISOString().split('T')[0]);
   const [observacao, setObservacao] = useState(item?.observacao || '');
+  const [error, setError] = useState('');
 
   const subOptions = SUBCATEGORIES[categoria];
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!subcategoria || !descricao || !valor || !data) return;
+    if (!subcategoria || !descricao || !data) {
+      setError(t('common.fillRequiredFields'));
+      return;
+    }
+    const valorNum = toCents(parseFloat(valor));
+    if (valorNum <= 0) {
+      setError(t('patrimonio.form.errorValue'));
+      return;
+    }
 
     onSave({
       categoria,
       subcategoria,
       descricao,
-      valorAquisicao: parseFloat(valor),
+      valorAquisicao: valorNum,
       dataAquisicao: data,
       observacao
     });
@@ -436,11 +445,20 @@ const PatrimonioModal = ({ item, onClose, onSave, t, lang }: any) => {
 
           {/* Form Fields */}
           <div className="space-y-4">
+            {error && (
+              <div className="p-4 bg-red-soft rounded-2xl border border-red-brick/10 flex items-center gap-3">
+                <AlertCircle size={18} className="text-red-brick shrink-0" />
+                <p className="text-xs font-bold text-red-brick">{error}</p>
+              </div>
+            )}
             <div className="space-y-1">
               <label className="text-[10px] font-black text-gray-light uppercase tracking-[0.2em]">{t('patrimonio.form.description')}</label>
               <input 
                 value={descricao}
-                onChange={e => setDescricao(e.target.value)}
+                onChange={e => {
+                  setDescricao(e.target.value);
+                  if (error) setError('');
+                }}
                 placeholder="Ex: Casa Rua das Flores, Corolla 2022..."
                 required
                 className="w-full p-4 bg-white-off border border-gray-soft rounded-2xl outline-none focus:ring-2 focus:ring-gold-principal text-navy-principal font-bold"

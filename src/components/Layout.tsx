@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Calendar, Grid, Menu, MessageCircle } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { AppHeader } from './AppHeader';
 import { Footer } from './Footer';
 import { useFinance } from '../contexts/FinanceContext';
 import { useTranslation } from '../i18n/useTranslation';
+import { useNetwork } from '../hooks/useNetwork';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -29,7 +30,9 @@ const CrownIcon = ({ className, size = 20 }: { className?: string, size?: number
 
 export const Layout: React.FC<LayoutProps> = ({ children, activeTab, setActiveTab, onOpenChat }) => {
   const { data } = useFinance();
-  const { t, lang } = useTranslation();
+  const { t } = useTranslation();
+  const isOnline = useNetwork();
+  const [showOfflineModal, setShowOfflineModal] = useState(false);
   const currentYear = new Date().getFullYear();
 
   const tabs = [
@@ -58,6 +61,14 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, setActiveTa
     return `${monthName}/${now.getFullYear()}`;
   };
 
+  const handleChatClick = () => {
+    if (isOnline) {
+      onOpenChat();
+    } else {
+      setShowOfflineModal(true);
+    }
+  };
+
   return (
     <div className="flex flex-col h-screen bg-white-off text-gray-bluish font-sans overflow-hidden">
       <AppHeader 
@@ -65,6 +76,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, setActiveTa
         subtitle={getSubtitle()}
         showLogo={true}
         logoSize={activeTab === 'inicio' ? 'medium' : 'small'}
+        isOnline={isOnline}
       />
 
       {/* Main Content */}
@@ -79,11 +91,30 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, setActiveTa
 
       {/* Floating Chat Button */}
       <button
-        onClick={onOpenChat}
-        className="fixed right-6 bottom-24 p-4 bg-navy-principal text-white rounded-full shadow-lg hover:scale-110 transition-transform z-40"
+        onClick={handleChatClick}
+        className={cn(
+          "fixed right-6 bottom-24 p-4 rounded-full shadow-lg hover:scale-110 transition-transform z-40",
+          isOnline ? "bg-navy-principal text-white" : "bg-gray-300 text-gray-500 cursor-not-allowed"
+        )}
       >
         <MessageCircle size={24} />
       </button>
+
+      {/* Offline Modal */}
+      {showOfflineModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/50">
+          <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-sm">
+            <h3 className="font-bold text-lg mb-2">{t('chat.offlineModal.title')}</h3>
+            <p className="text-gray-600 mb-6">{t('chat.offlineModal.message')}</p>
+            <button 
+              onClick={() => setShowOfflineModal(false)}
+              className="w-full p-4 bg-navy-principal text-white rounded-xl font-bold"
+            >
+              {t('chat.offlineModal.button')}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Bottom Navigation */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white-pure border-t border-gray-soft px-4 h-[60px] flex justify-around items-center z-50 shadow-[0_-2px_10px_rgba(27,43,68,0.05)]">

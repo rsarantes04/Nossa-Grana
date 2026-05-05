@@ -1,0 +1,124 @@
+16:  updateLancamento: (ano: number, mes: number, subcatId: string, catId: string, tipo: 'orcado' | 'realizado', valor: number) => void;
+29:  addDivida: (divida: Omit<Divida, 'id' | 'totalPago' | 'saldoRestante' | 'progresso' | 'status' | 'conquistada' | 'historicoPagamentos'>) => void;
+34:  updateMetaAporte: (id: string, valor: number) => void;
+35:  addSonhoProjeto: (sonho: Omit<SonhoProjeto, 'id' | 'valorAcumulado' | 'progresso' | 'aportes' | 'subcategoriaId' | 'conquistado'>) => void;
+43:  updateMetaIndependencia: (valor: number) => void;
+54:  updateOrcamento: (ano: number, mes: number, categoriaId: string, subcategoriaId: string | undefined, valor: number | null) => void;
+86:    aporteInvestimentos: 0.20,
+192:        valor: roundCurrency(l.valor)
+300:        valorTotal: roundCurrency(p.valorTotal),
+301:        valorParcela: roundCurrency(p.valorParcela)
+305:        valorOrcado: o.valorOrcado !== null ? roundCurrency(o.valorOrcado) : null
+309:        valorContratado: roundCurrency(d.valorContratado),
+310:        valorParcela: roundCurrency(d.valorParcela),
+311:        saldoQuitacaoVista: roundCurrency(d.saldoQuitacaoVista)
+315:        valorMeta: roundCurrency(m.valorMeta),
+316:        valorAcumulado: roundCurrency(m.valorAcumulado)
+320:        valorMeta: roundCurrency(s.valorMeta),
+321:        valorAcumulado: roundCurrency(s.valorAcumulado),
+322:        aportes: (s.aportes || []).map((a: any) => ({ ...a, valor: roundCurrency(a.valor) }))
+538:      const totalRendaMes = data.lancamentos
+540:        .reduce((acc, l) => acc + toCents(l.valor), 0);
+542:      const totalGastoMes = data.lancamentos
+544:        .reduce((acc, l) => acc + toCents(l.valor), 0);
+568:              dados: { varPercentual: varPercent, valorAtual: fromCents(valAtualCents), valorAnterior: fromCents(valAnteriorCents) }
+582:              dados: { varPercentual: varPercent, valorAtual: fromCents(valAtualCents), valorAnterior: fromCents(valAnteriorCents) }
+589:      if (totalRendaMes > 0) {
+593:          const percentRenda = (realizadoCents / totalRendaMes) * 100;
+612:      if (totalRendaMes > 0 && totalGastoMes > totalRendaMes) {
+614:          id: `saldo-negativo-${currentMonth}-${currentYear}`,
+617:          descricao: `Seus gastos totais (${formatCurrency(fromCents(totalGastoMes))}) superaram sua renda realizada (${formatCurrency(fromCents(totalRendaMes))}).`,
+627:      // 4. Sonho sem aporte há 60 dias (ATENÇÃO)
+630:        const lastAporte = sonho.aportes
+641:              descricao: `Não identificamos aportes para este objetivo nos últimos 60 dias. Que tal retomar o planejamento?`,
+654:      if (totalRendaMes > 0 && totalGastoMes < totalRendaMes && totalGastoMes > 0) {
+656:          id: `conquista-saldo-positivo-${currentMonth}-${currentYear}`,
+659:          descricao: `Parabéns! Você gastou menos do que ganhou este mês, sobrando ${formatCurrency(totalRendaMes - totalGastoMes)} para seus sonhos.`,
+673:        const saldoLivre = orcado - realizado;
+674:        if (orcado > 0 && saldoLivre >= 200) {
+679:            descricao: `Você ainda tem ${formatCurrency(saldoLivre)} sobrando do orçado para ${cat.nome}. Que tal investir esse valor?`,
+694:        .reduce((acc, l) => acc + toCents(l.valor), 0);
+698:      // Média de aportes últimos 3 meses
+701:        .reduce((acc, l) => acc + toCents(l.valor), 0);
+715:      let tempoDesc = "Defina uma média de aportes para estimar o tempo.";
+834:        valor: typeof lancamento.valor === 'string' ? parseFloat(lancamento.valor) : lancamento.valor
+841:    if (safeLancamento.valor <= 0) {
+842:      showToast('O valor do lançamento deve ser positivo!', 'error');
+855:        valor: fromCents(toCents(safeLancamento.valor))
+868:  const updateLancamento = (id: string, valor: number, tipo: 'orcado' | 'realizado') => {
+874:  const upsertLancamento = (ano: number, mes: number, subcatId: string, catId: string, tipo: 'orcado' | 'realizado', valor: number) => {
+875:    const roundedValor = roundCurrency(valor);
+888:        newLancamentos[existingIndex] = { ...newLancamentos[existingIndex], valor: roundedValor, dataEdicao: new Date().toISOString() };
+897:          valor: roundedValor,
+916:        valor: updates.valor !== undefined ? roundCurrency(updates.valor) : old.valor,
+959:          const totalCents = kept.reduce((acc, l) => acc + toCents(l.valor), 0);
+968:                valorTotal: fromCents(totalCents),
+969:                totalParcelas: kept.length,
+1096:          valorMeta: 0,
+1097:          valorAcumulado: 0,
+1105:          aportes: []
+1163:               valorMeta: 0,
+1164:               valorAcumulado: 0,
+1172:               aportes: []
+1294:  const addDivida = (divida: Omit<Divida, 'id' | 'totalPago' | 'saldoRestante' | 'progresso' | 'status' | 'conquistada' | 'historicoPagamentos'>) => {
+1304:        totalPago: 0,
+1305:        saldoRestante: sanitizeCurrency(divida.valorContratado),
+1310:        valorContratado: sanitizeCurrency(divida.valorContratado),
+1311:        valorParcela: sanitizeCurrency(divida.valorParcela),
+1312:        saldoQuitacaoVista: sanitizeCurrency(divida.saldoQuitacaoVista)
+1328:    if (updates.valorContratado !== undefined && updates.valorContratado <= 0) {
+1329:      showToast('O valor da dívida deve ser positivo!', 'error');
+1336:      ...(updates.valorContratado !== undefined && { valorContratado: sanitizeCurrency(updates.valorContratado) }),
+1337:      ...(updates.valorParcela !== undefined && { valorParcela: sanitizeCurrency(updates.valorParcela) }),
+1338:      ...(updates.saldoQuitacaoVista !== undefined && { saldoQuitacaoVista: sanitizeCurrency(updates.saldoQuitacaoVista) }),
+1390:        valorMeta: roundCurrency(meta.valorMeta),
+1391:        valorAcumulado: roundCurrency(meta.valorAcumulado)
+1396:  const updateMetaAporte = (id: string, valor: number) => {
+1397:    const roundedValor = roundCurrency(valor);
+1401:        m.id === id ? { ...m, valorAcumulado: roundCurrency(m.valorAcumulado + roundedValor) } : m
+1406:  const addSonhoProjeto = (sonho: Omit<SonhoProjeto, 'id' | 'valorAcumulado' | 'progresso' | 'aportes' | 'subcategoriaId' | 'conquistado' | 'origemCriacao'>) => {
+1409:    const roundedMeta = roundCurrency(sonho.valorMeta);
+1430:        valorMeta: roundedMeta,
+1431:        valorAcumulado: 0,
+1435:        aportes: []
+1534:    if (updates.valorAquisicao !== undefined && updates.valorAquisicao <= 0) {
+1535:      showToast('O valor de aquisição deve ser positivo!', 'error');
+1542:      ...(updates.valorAquisicao !== undefined && { valorAquisicao: roundCurrency(updates.valorAquisicao) }),
+1595:  const updateMetaIndependencia = (valor: number) => {
+1596:    setData(prev => ({ ...prev, metaIndependenciaFinanceira: valor }));
+1600:    if (numParcelas <= 0 || parcelamento.valorTotal <= 0) {
+1607:    const totalCents = toCents(parcelamento.valorTotal);
+1608:    const baseCents = Math.floor(totalCents / numParcelas);
+1609:    const remainder = totalCents % numParcelas;
+1635:      valorTotal: fromCents(totalCents),
+1636:      valorParcela: fromCents(baseCents), // Updated to base
+1637:      totalParcelas: numParcelas,
+1648:      const valorCents = (i < remainder) ? baseCents + 1 : baseCents;
+1661:        valor: fromCents(valorCents),
+1664:        totalParcelas: numParcelas,
+1754:               const parcelasDatas = calcularQuantidadeFaturasAteVencimento(updatedCard, p.dataCompra!, p.totalParcelas);
+1799:      if (updates.valorTotal !== undefined) roundedUpdates.valorTotal = roundCurrency(updates.valorTotal);
+1800:      if (updates.valorParcela !== undefined) roundedUpdates.valorParcela = roundCurrency(updates.valorParcela);
+1809:            descricao: updates.descricao ? `${updates.descricao} (${l.numeroParcela}/${l.totalParcelas})` : l.descricao,
+1840:      if (updates.valor !== undefined) roundedUpdates.valor = fromCents(toCents(updates.valor));
+1851:        detalhes: `Parcela individual ${old.numeroParcela}/${old.totalParcelas} atualizada`
+1860:    const roundedValor = updates.valor !== undefined ? roundCurrency(updates.valor) : undefined;
+1871:          if (roundedValor !== undefined) parcelaUpdates.valor = roundedValor;
+1896:      // Update parent parcelamento if valorParcela changed
+1900:          if (applyToAll.valor && roundedValor !== undefined) {
+1901:            updatedP.valorParcela = fromCents(toCents(roundedValor));
+1902:            updatedP.valorTotal = fromCents(
+1905:              .reduce((acc, l) => acc + toCents(l.numeroParcela! < fromParcela ? l.valor : roundedValor), 0)
+1932:          return { ...p, valorTotal: fromCents(Math.max(0, toCents(p.valorTotal) - toCents(lancamento.valor))) };
+1941:        detalhes: `Parcela ${lancamento.numeroParcela}/${lancamento.totalParcelas} removida individualmente`
+1960:          const totalValueCents = keptLancamentos
+1962:              .reduce((acc, l) => acc + toCents(l.valor), 0);
+1977:            totalParcelas: keptLancamentos.filter(l => l.parcelamentoId === parcelamentoId).length,
+1978:            valorTotal: fromCents(totalValueCents)
+1995:  const updateOrcamento = (ano: number, mes: number, categoriaId: string, subcategoriaId: string | undefined, valor: number | null) => {
+1997:    const roundedValor = valor !== null ? roundCurrency(valor) : null;
+2006:        newOrcamentos[existingIndex] = { ...newOrcamentos[existingIndex], valorOrcado: roundedValor, dataAtualizacao: now };
+2014:          valorOrcado: roundedValor,
+2038:          nextOrcamentos[existingIndex] = { ...nextOrcamentos[existingIndex], valorOrcado: curr.valorOrcado, dataAtualizacao: now };
+2046:            valorOrcado: curr.valorOrcado,
+2074:    return filtered.reduce((acc, l) => acc + toCents(l.valor), 0);

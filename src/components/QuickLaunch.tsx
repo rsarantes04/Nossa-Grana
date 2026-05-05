@@ -6,8 +6,9 @@ import { format, parseISO, addMonths } from 'date-fns';
 import { PaymentMethod } from '../types';
 import { CurrencyInput } from './CurrencyInput';
 import { useTranslation } from '../i18n/useTranslation';
-import { calcularDatasCobranca } from '../lib/cartaoUtils';
+import { calcularDatasCobranca, getFaturaDisplay } from '../lib/cartaoUtils';
 import { cn } from '../lib/utils';
+import { toCents, toDecimal } from '../lib/currency';
 
 export const QuickLaunch: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const { data, addLancamento, addParcelamento } = useFinance();
@@ -36,8 +37,8 @@ export const QuickLaunch: React.FC<{ onClose: () => void }> = ({ onClose }) => {
          const { mesLancamento, anoLancamento } = calcularDatasCobranca(cartao, formData.data);
          const date = parseISO(formData.data);
          setCalcResult({
-           faturaDisplay: format(new Date(date.getFullYear(), date.getMonth() + (date.getDate() < cartao.diaFechamento ? 0 : 1), 1), 'MM/yyyy'),
-           cobrancaMes: mesLancamento + 1,
+           faturaDisplay: getFaturaDisplay(mesLancamento, anoLancamento),
+           cobrancaMes: (mesLancamento + 1).toString(),
            cobrancaAno: anoLancamento,
            isAntesFechamento: date.getDate() < cartao.diaFechamento
          });
@@ -82,7 +83,7 @@ export const QuickLaunch: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   };
 
   const handleSave = () => {
-    const valor = parseFloat(formData.valor) || 0;
+    const valor = toCents(parseFloat(formData.valor) || 0);
     const date = parseISO(formData.data);
     let extraFields = {};
 
@@ -90,7 +91,7 @@ export const QuickLaunch: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       extraFields = {
         cartaoId: formData.cartaoId,
         dataCompra: formData.data,
-        mes: calcResult.cobrancaMes - 1,
+        mes: parseInt(calcResult.cobrancaMes as string) - 1,
         ano: calcResult.cobrancaAno
       };
     }
@@ -98,6 +99,8 @@ export const QuickLaunch: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     if (formData.isParcelado) {
       const numParcelas = parseInt(formData.numParcelas);
       const { mes: mesInicial, ano: anoInicial } = (extraFields as any) || { mes: date.getMonth(), ano: date.getFullYear() };
+      
+      const valorParcela = Math.floor(valor / numParcelas);
       
       addParcelamento({
         descricao: formData.descricao || 'Compra Parcelada',
@@ -109,7 +112,7 @@ export const QuickLaunch: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         categoriaId: formData.catId,
         subcategoriaId: formData.subcatId,
         formaPagamento: formData.formaPagamento,
-        valorParcela: valor / numParcelas,
+        valorParcela: valorParcela,
         totalParcelas: numParcelas,
         tipo: selectedCategory?.tipo || 'despesa',
         ...extraFields
@@ -289,13 +292,6 @@ export const QuickLaunch: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                       onChange={(e) => {
                         const newDate = e.target.value;
                         let updatedFormData = { ...formData, data: newDate };
-                        if (formData.formaPagamento === 'Cartão de Crédito' && formData.cartaoId) {
-                          const cartao = data.cartoes?.find(c => c.id === formData.cartaoId);
-                          if (cartao) {
-                             const { mesLancamento, anoLancamento } = calcularDatasCobranca(cartao, newDate);
-                             updatedFormData = { ...updatedFormData, mes: mesLancamento, ano: anoLancamento };
-                          }
-                        }
                         setFormData(updatedFormData);
                       }}
                       className="w-full pl-12 pr-4 py-4 bg-white-off border border-gray-soft rounded-2xl text-sm outline-none focus:ring-2 focus:ring-gold-principal text-navy-principal"
@@ -385,7 +381,7 @@ export const QuickLaunch: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                       </select>
                       {formData.valor && (
                         <p className="text-xs text-gold-dark font-bold mt-2">
-                          {t('quick.installment_value')}: {new Intl.NumberFormat(lang === 'pt' ? 'pt-BR' : lang === 'en' ? 'en-US' : 'es-ES', { style: 'currency', currency: lang === 'pt' ? 'BRL' : lang === 'en' ? 'USD' : 'EUR' }).format(parseFloat(formData.valor) / parseInt(formData.numParcelas))}
+                          {t('quick.installment_value')}: {new Intl.NumberFormat(lang === 'pt' ? 'pt-BR' : lang === 'en' ? 'en-US' : 'es-ES', { style: 'currency', currency: lang === 'pt' ? 'BRL' : lang === 'en' ? 'USD' : 'EUR' }).format(toDecimal(Math.floor(toCents(parseFloat(formData.valor)) / parseInt(formData.numParcelas))))}
                         </p>
                       )}
                     </motion.div>

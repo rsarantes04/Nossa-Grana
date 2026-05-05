@@ -11,6 +11,7 @@ import { ptBR } from 'date-fns/locale';
 import { cn, formatCurrency, formatDate } from '../lib/utils';
 import { CurrencyInput } from './CurrencyInput';
 import { useTranslation } from '../i18n/useTranslation';
+import { toCents, toDecimal } from '../lib/currency';
 
 interface InstallmentManagerProps {
   lancamento: Lancamento;
@@ -197,7 +198,7 @@ const ActionButton = ({ icon, title, subtitle, onClick }: any) => (
 const EditSingleView = ({ lancamento, onClose, onSave }: any) => {
   const { data } = useFinance();
   const { t } = useTranslation();
-  const [valor, setValor] = useState(lancamento.valor.toString());
+  const [valor, setValor] = useState(toDecimal(lancamento.valor).toString());
   const [dataVenc, setDataVenc] = useState(lancamento.data?.split('T')[0] || '');
   const [catId, setCatId] = useState(lancamento.categoriaId);
   const [subcatId, setSubcatId] = useState(lancamento.subcategoriaId);
@@ -305,7 +306,7 @@ const EditSingleView = ({ lancamento, onClose, onSave }: any) => {
         <button onClick={onClose} className="flex-1 py-4 text-gray-medium font-bold hover:text-navy-principal transition-colors">{t('installment.edit.cancel')}</button>
         <button 
           onClick={() => onSave({ 
-            valor: parseFloat(valor), 
+            valor: toCents(parseFloat(valor)), 
             data: dataVenc ? new Date(dataVenc + 'T12:00:00Z').toISOString() : lancamento.data,
             categoriaId: catId,
             subcategoriaId: subcatId,
@@ -324,7 +325,7 @@ const EditSingleView = ({ lancamento, onClose, onSave }: any) => {
 const EditRemainingView = ({ lancamento, parcelamento, onClose, onSave }: any) => {
   const { data } = useFinance();
   const { t } = useTranslation();
-  const [valor, setValor] = useState(lancamento.valor.toString());
+  const [valor, setValor] = useState(toDecimal(lancamento.valor).toString());
   const [dataVenc, setDataVenc] = useState(lancamento.data?.split('T')[0] || '');
   const [catId, setCatId] = useState(lancamento.categoriaId);
   const [subcatId, setSubcatId] = useState(lancamento.subcategoriaId);
@@ -482,7 +483,7 @@ const EditRemainingView = ({ lancamento, parcelamento, onClose, onSave }: any) =
         <button onClick={onClose} className="flex-1 py-4 text-gray-medium font-bold hover:text-navy-principal transition-colors">{t('installment.edit.cancel')}</button>
         <button 
           onClick={() => onSave({ 
-            valor: parseFloat(valor), 
+            valor: toCents(parseFloat(valor)), 
             data: dataVenc ? new Date(dataVenc + 'T12:00:00Z').toISOString() : lancamento.data,
             categoriaId: catId,
             subcategoriaId: subcatId,

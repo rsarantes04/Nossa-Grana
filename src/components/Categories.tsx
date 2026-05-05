@@ -24,6 +24,7 @@ export const Categories: React.FC = () => {
   const [editingSubcat, setEditingSubcat] = useState<{ cat: Category, sub: Subcategory } | null>(null);
   const [filter, setFilter] = useState<'all' | 'active' | 'archived'>('active');
   const [deletingCategory, setDeletingCategory] = useState<Category | null>(null);
+  const [reassignToId, setReassignToId] = useState<string | null>(null);
   const [deletingSubcat, setDeletingSubcat] = useState<{ cat: Category, sub: Subcategory } | null>(null);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
 
@@ -150,14 +151,33 @@ export const Categories: React.FC = () => {
               <div className="space-y-2">
                 <h3 className="text-xl font-serif font-bold text-navy-principal">{t('categories.deleteCategoryTitle')}</h3>
                 <p className="text-sm text-gray-medium leading-relaxed">
-                  {t('categories.deleteCategoryConfirm', deletingCategory.nome)}
+                  {data.lancamentos.some(l => l.categoriaId === deletingCategory.id) 
+                    ? 'Esta categoria possui lançamentos. Selecione uma categoria para re-vincular ou cancele para arquivar.' 
+                    : t('categories.deleteCategoryConfirm', deletingCategory.nome)}
                 </p>
+                {data.lancamentos.some(l => l.categoriaId === deletingCategory.id) && (
+                  <select 
+                    onChange={(e) => setReassignToId(e.target.value)}
+                    className="w-full mt-4 p-3 bg-white-off border border-gray-soft rounded-xl text-sm outline-none"
+                  >
+                    <option value="">Selecione uma categoria para migrar...</option>
+                    {data.categorias.filter(c => c.id !== deletingCategory.id && c.ativa).map(c => (
+                      <option key={c.id} value={c.id}>{c.nome}</option>
+                    ))}
+                  </select>
+                )}
               </div>
               <div className="flex flex-col gap-3">
                 <button 
                   onClick={() => {
-                    removeCategory(deletingCategory.id);
+                    const has = data.lancamentos.some(l => l.categoriaId === deletingCategory.id);
+                    if (has && !reassignToId) {
+                      alert('Selecione uma categoria para migrar os lançamentos.');
+                      return;
+                    }
+                    removeCategory(deletingCategory.id, reassignToId || undefined);
                     setDeletingCategory(null);
+                    setReassignToId(null);
                     showToast(t('categories.toast.categoryDeleted'));
                   }}
                   className="w-full py-4 bg-red-brick text-white-pure rounded-2xl font-bold shadow-lg shadow-red-brick/20"
@@ -165,7 +185,10 @@ export const Categories: React.FC = () => {
                   {t('categories.confirmDelete')}
                 </button>
                 <button 
-                  onClick={() => setDeletingCategory(null)}
+                  onClick={() => {
+                    setDeletingCategory(null);
+                    setReassignToId(null);
+                  }}
                   className="w-full py-2 text-gray-light font-bold text-sm"
                 >
                   {t('categories.cancel')}

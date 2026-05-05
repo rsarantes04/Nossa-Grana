@@ -34,7 +34,7 @@ export const DEFAULT_CATEGORIES: Category[] = [
     'Dízimo e ofertas', 'Doações', 'Auxílio a entidades', 'Rifas'
   ], 1),
   createCategory('INVESTIMENTOS', 'investimento', '📈', '#5856D6', [
-    'Tesouro Direto', 'CDI', 'CDB', 'Ações', 'Fundos de Investimento'
+    'Tesouro Direto', 'ETFs', 'CDB', 'Ações', 'Fundos de investimentos', 'Criptomoedas', 'Moeda estrangeira', 'Ouro'
   ], 2),
   createCategory('HABITAÇÃO', 'despesa', '🏠', '#4A90D9', [
     'Água', 'Energia Elétrica', 'Internet / Telefone Fixo', 'Supermercado', 'Padaria', 
@@ -50,7 +50,7 @@ export const DEFAULT_CATEGORIES: Category[] = [
   ], 5),
   createCategory('DESPESAS PESSOAIS', 'despesa', '👤', '#AF52DE', [
     'Cosméticos', 'Manicure / Estética', 'Roupas e Acessórios', 'Telefone Celular', 
-    'Academia', 'Esportes', 'Cabelereiro', 'Lazer Noturno'
+    'Academia', 'Esportes', 'Cabelereiro'
   ], 6),
   createCategory('LAZER', 'despesa', '🎭', '#FF2D55', [
     'Restaurantes', 'Livraria / Jornal / Streaming', 'Hotel e Passagens', 'Passeios e Atrações'
@@ -76,9 +76,27 @@ export const DEFAULT_CATEGORIES: Category[] = [
     'Mensalidade Cartão de Crédito', 'Mensalidade Conta Bancária', 'Abertura de Crédito', 
     'Empréstimo Pessoal', 'Cheque Especial', 'Juros Bancários'
   ], 13),
-  createCategory('SONHOS & PROJETOS', 'investimento', '⭐', '#FFD60A', [
-    'Viagem a Europa', 'Sítio', 'Abrir empresa', 'Troca de carro', 'Comprar casa', 'Cirurgia plástica'
-  ], 14),
+  {
+    id: 'cat-sonhos-001',
+    nome: 'SONHOS & PROJETOS',
+    tipo: 'investimento',
+    icone: '⭐',
+    cor: '#FFD60A',
+    ordem: 14,
+    ativa: true,
+    dataCriacao: new Date().toISOString(),
+    dataAtualizacao: new Date().toISOString(),
+    subcategorias: [
+      'Viagem a Europa', 'Sítio', 'Abrir empresa', 'Troca de carro', 'Comprar casa', 'Cirurgia plástica'
+    ].map((name, idx) => ({
+      id: uuidv4(),
+      nome: name,
+      ativa: true,
+      ordem: idx,
+      dataCriacao: new Date().toISOString(),
+      categoriaPaiId: 'cat-sonhos-001'
+    }))
+  },
   {
     id: 'cat-dividas-001',
     nome: 'DÍVIDAS',

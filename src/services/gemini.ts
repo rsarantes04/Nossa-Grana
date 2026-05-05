@@ -4,40 +4,47 @@ import { FinanceData } from "../types";
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
 export async function getAssistantResponse(userMessage: string, financeData: FinanceData) {
-  const model = "gemini-3-flash-preview";
+  const model = "gemini-1.5-flash"; // A widely available model
+
+  const now = new Date();
+  const mesAtual = now.toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
+  const lancamentosMes = financeData.lancamentos.filter(l => l.ano === now.getFullYear() && l.mes === now.getMonth());
+  
+  const totalRecebido = lancamentosMes.filter(l => financeData.categorias.find(c => c.id === l.categoriaId)?.tipo === 'renda').reduce((acc, l) => acc + l.valor, 0);
+  const totalGasto = lancamentosMes.filter(l => financeData.categorias.find(c => c.id === l.categoriaId)?.tipo === 'despesa').reduce((acc, l) => acc + l.valor, 0);
+  
+  const topCategorias = financeData.categorias
+    .filter(c => c.tipo === 'despesa')
+    .map(c => ({
+      nome: c.nome,
+      valor: lancamentosMes.filter(l => l.categoriaId === c.id).reduce((acc, l) => acc + l.valor, 0)
+    }))
+    .filter(c => c.valor > 0)
+    .sort((a, b) => b.valor - a.valor)
+    .slice(0, 3);
+
+  const contextoDados = JSON.stringify({
+    mesAtual,
+    totalRecebido,
+    totalGasto,
+    saldoMes: totalRecebido - totalGasto,
+    topCategorias,
+    sonhosAtivos: financeData.sonhosProjetos.filter(s => s.ativa).map(s => ({ nome: s.nome, progresso: s.progresso })),
+    dividasAtivas: financeData.dividas.filter(d => !d.conquistada).length,
+    patrimonioTotal: financeData.patrimonio.reduce((acc, p) => acc + p.valorAquisicao, 0),
+    idioma: "pt"
+  });
   
   const systemInstruction = `
-    Você é o assistente financeiro do aplicativo "Nossa Grana".
-    Seu tom é amigável, encorajador e didático. Use português brasileiro.
-    Nunca julgue os hábitos financeiros do usuário.
-    
-    Contexto da Família:
-    - Nome: ${financeData.familia.nome}
-    - Dados Financeiros Atuais (Lancamentos e Parcelamentos): ${JSON.stringify(financeData)}
-    
-    Regras:
-    - Responda perguntas sobre gastos, orçamentos, dívidas, metas e parcelamentos.
-    - Se o usuário perguntar sobre gastos em uma categoria, some os valores "realizados" dos lançamentos.
-    - Se o usuário estiver estourando o orçamento, compare "orcado" vs "realizado".
-    - Para parcelamentos:
-        - Se o usuário perguntar quantas parcelas restam, procure no campo "lancamentos" por itens com o mesmo "parcelamentoId" que tenham data futura ou conte os que faltam para atingir "totalParcelas".
-        - Se o usuário pedir lista de parcelas de um mês, filtre "lancamentos" por mes/ano e verifique se tem "parcelamentoId".
-    - Não tome ações automáticas, apenas informe e oriente.
-    - Use formatação Markdown para deixar a resposta bonita.
-    - Use emojis relacionados a finanças.
+    Você é o assistente financeiro do aplicativo Nossa Grana.
+    Seu nome é Grana. Responda sempre em português.
+    Seja objetivo, amigável e use linguagem simples.
+    Não invente dados — use apenas as informações fornecidas no contexto abaixo. Se não souber responder com os dados disponíveis, diga que não tem essa informação no momento.
 
-    Exemplos de Interação:
-    - Usuário: "Qual foi meu último lançamento?"
-    - Assistente: "Seu último lançamento foi 'Almoço' no valor de R$ 45,00 em 11/04, na categoria Alimentação. 🍽️💰"
+    Contexto financeiro do usuário:
+    ${contextoDados}
 
-    - Usuário: "Quanto lancei em março?"
-    - Assistente: "Em Março, você teve um total de R$ 4.200,00 em lançamentos realizados. 📊✅"
-
-    - Usuário: "Tenho lançamentos parcelados em aberto?"
-    - Assistente: "Sim, você tem 3 parcelamentos ativos: Celular (4/10), Seguro Carro (2/4) e Notebook (1/12). 💳📅"
-
-    - Usuário: "Quantas parcelas restam da compra do Celular?"
-    - Assistente: "Você já pagou 4 de 10 parcelas do seu Celular. Restam 6 parcelas de R$ 385,00, totalizando R$ 2.310,00. A próxima vence em 10/05. 📱💳"
+    Responda a pergunta do usuário de forma clara e direta.
   `;
 
   try {

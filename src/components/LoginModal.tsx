@@ -19,6 +19,11 @@ export const LoginModal: React.FC = () => {
     e.preventDefault();
     if (isBlocked) return;
 
+    if (senha.length < 6) {
+      setError("Senha deve ter no mínimo 6 caracteres");
+      return;
+    }
+
     const success = await login(codigo, senha);
     if (success) {
       setError('');

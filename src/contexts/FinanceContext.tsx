@@ -1,9 +1,30 @@
-import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
-import { FinanceData, Lancamento, Category, Subcategory, Divida, Meta, Familia, MetasMensais, Parcelamento, AuditLog, SonhoProjeto, AporteSonho, Insight, Configuracoes, StatusDivida, Patrimonio } from '../types';
+import React, { createContext, useContext, useState, useEffect, useMemo, useReducer } from 'react';
+import { FinanceData, Lancamento, Category, Subcategory, Divida, Meta, Familia, MetasMensais, Parcelamento, AuditLog, SonhoProjeto, AporteSonho, Insight, Configuracoes, StatusDivida, Patrimonio, Cartao, PaymentMethod } from '../types';
 import { DEFAULT_CATEGORIES } from '../constants';
 import { addMonths, format, parseISO } from 'date-fns';
-import { formatCurrency, roundCurrency } from '../lib/utils';
+import { formatCurrency, roundCurrency, toCents, fromCents, sanitizeCurrency } from '../lib/utils';
+import { calcularQuantidadeFaturasAteVencimento, calcularDatasCobranca } from '../lib/cartaoUtils';
+import { getRealized as libGetRealized, getBudgeted as libGetBudgeted, calculateDivida } from '../lib/financialCalculations';
 import bcrypt from 'bcryptjs';
+import { validateLancamento, validateDivida, validatePatrimonio, validateCartao } from '../services/validationService';
+import { syncDividas, syncSonhosProjetos } from '../lib/dataSync';
+import { toCents, toDecimal } from '../lib/currency';
+
+// Actions
+export type FinanceAction = 
+  | { type: 'UPDATE_DATA'; payload: FinanceData }
+  | { type: 'RESET_DATA' };
+
+const financeReducer = (state: FinanceData, action: FinanceAction): FinanceData => {
+  switch (action.type) {
+    case 'UPDATE_DATA':
+      return action.payload;
+    case 'RESET_DATA':
+      return INITIAL_DATA;
+    default:
+      return state;
+  }
+};
 
 interface FinanceContextType {
   data: FinanceData;
@@ -15,11 +36,12 @@ interface FinanceContextType {
   addCategory: (category: Omit<Category, 'id' | 'dataCriacao' | 'dataAtualizacao' | 'ordem' | 'ativa'>) => void;
   updateCategory: (id: string, updates: Partial<Category>) => void;
   archiveCategory: (id: string) => void;
-  removeCategory: (id: string) => void;
+  removeCategory: (id: string, reassignToId?: string) => void;
   addSubcategory: (categoryId: string, name: string) => void;
   updateSubcategory: (categoryId: string, subcatId: string, updates: Partial<Subcategory>) => void;
   archiveSubcategory: (categoryId: string, subcatId: string) => void;
   removeSubcategory: (categoryId: string, subcatId: string) => void;
+  removeAllSubcategories: () => void;
   reorderCategories: (newOrder: Category[]) => void;
   addDivida: (divida: Omit<Divida, 'id' | 'totalPago' | 'saldoRestante' | 'progresso' | 'status' | 'conquistada' | 'historicoPagamentos'>) => void;
   updateDivida: (id: string, updates: Partial<Divida>) => void;
@@ -30,7 +52,7 @@ interface FinanceContextType {
   addSonhoProjeto: (sonho: Omit<SonhoProjeto, 'id' | 'valorAcumulado' | 'progresso' | 'aportes' | 'subcategoriaId' | 'conquistado'>) => void;
   updateSonhoProjeto: (id: string, updates: Partial<SonhoProjeto>) => void;
   removeSonhoProjeto: (id: string) => void;
-  addPatrimonio: (patrimonio: Omit<Patrimonio, 'id' | 'criadoEm' | 'ativo'>) => void;
+  addPatrimonio: (patrimonio: Omit<Patrimonio, 'id' | 'dataCriacao' | 'ativo'>) => void;
   updatePatrimonio: (id: string, updates: Partial<Patrimonio>) => void;
   removePatrimonio: (id: string) => void;
   markInsightAsRead: (id: string) => void;
@@ -39,7 +61,7 @@ interface FinanceContextType {
   addParcelamento: (parcelamento: Omit<Parcelamento, 'id'>, numParcelas: number) => void;
   removeParcelamento: (id: string) => void;
   updateParcelamento: (id: string, updates: Partial<Parcelamento>) => void;
-  addCartao: (cartao: Omit<Cartao, 'id' | 'criadoEm' | 'ativo'>) => void;
+  addCartao: (cartao: Omit<Cartao, 'id' | 'dataCriacao' | 'ativo'>) => void;
   updateCartao: (id: string, updates: Partial<Cartao>) => void;
   removeCartao: (id: string) => void;
   updateInstallmentIndividual: (id: string, updates: Partial<Lancamento>) => void;
@@ -48,6 +70,10 @@ interface FinanceContextType {
   cancelInstallmentsRemaining: (parcelamentoId: string, fromParcela: number, motivo?: string, obs?: string) => void;
   updateOrcamento: (ano: number, mes: number, categoriaId: string, subcategoriaId: string | undefined, valor: number | null) => void;
   copyOrcamentoToNextMonth: (ano: number, mes: number) => void;
+  getFilteredLancamentos: (filter: { year?: number; month?: number | 'all'; categoryId?: string; subcategoryId?: string; type?: 'realizado' | 'orcado' }) => Lancamento[];
+  getSummedLancamentos: (filter: { year?: number; month?: number | 'all'; categoryId?: string; subcategoryId?: string; type?: 'realizado' | 'orcado' }) => number;
+  activeTimeframe: { year: number; month: number };
+  setActiveTimeframe: (year: number, month: number) => void;
   dismissDividasWelcome: () => void;
   setOnboarded: (value: boolean) => void;
   resetData: () => void;
@@ -91,22 +117,67 @@ const INITIAL_DATA: FinanceData = {
       nome: '',
       codigo: '',
       senhaHash: '',
-      criadoEm: ''
+      dataCriacao: ''
     }
   }
 };
 
 const FinanceContext = createContext<FinanceContextType | undefined>(undefined);
 
+const syncOrcamentos = (currentData: FinanceData): FinanceData => {
+  // Audit categories valid structure
+  const validSubcategories = new Set<string>();
+  currentData.categorias.forEach(cat => {
+    cat.subcategorias.forEach(sub => {
+      validSubcategories.add(sub.id);
+    });
+  });
+
+  const updatedOrcamentos: any[] = [];
+  const seen = new Set<string>(); // key = `${ano}-${mes}-${subcategoriaId}`
+  let changed = false;
+
+  currentData.orcamentosMensais.forEach(o => {
+    // 1. Validate subcategory
+    if (o.subcategoriaId && !validSubcategories.has(o.subcategoriaId)) {
+        changed = true;
+        return;
+    }
+
+    // 2. Check for duplicates
+    const key = `${o.ano}-${o.mes}-${o.subcategoriaId}`;
+    if (seen.has(key)) {
+        changed = true;
+        return;
+    }
+    seen.add(key);
+    updatedOrcamentos.push(o);
+  });
+
+  const isSame = updatedOrcamentos.length === currentData.orcamentosMensais.length &&
+                  updatedOrcamentos.every((o, i) => o === currentData.orcamentosMensais[i]);
+  
+  if (isSame) return currentData;
+
+  return { ...currentData, orcamentosMensais: updatedOrcamentos };
+};
+
 export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+  const [activeTimeframe, _setActiveTimeframe] = useState({ year: new Date().getFullYear(), month: new Date().getMonth() });
+  const setActiveTimeframe = React.useCallback((year: number, month: number) => {
+    _setActiveTimeframe(prev => {
+      if (prev.year === year && prev.month === month) return prev;
+      return { year, month };
+    });
+  }, []);
 
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
   };
-  const [data, setData] = useState<FinanceData>(() => {
+  const [data, dispatch] = useReducer(financeReducer, INITIAL_DATA, () => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (!saved) return INITIAL_DATA;
     
@@ -157,6 +228,21 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
     }
 
+    // Migration: Ensure SONHOS & PROJETOS has stable ID
+    const catSonhos = migratedCategories.find((c: any) => c.nome.toUpperCase() === 'SONHOS & PROJETOS');
+    if (catSonhos && catSonhos.id !== 'cat-sonhos-001') {
+      const oldId = catSonhos.id;
+      catSonhos.id = 'cat-sonhos-001';
+      catSonhos.subcategorias.forEach((s: any) => s.categoriaPaiId = 'cat-sonhos-001');
+
+      (parsed.lancamentos || []).forEach((l: any) => {
+        if (l.categoriaId === oldId) l.categoriaId = 'cat-sonhos-001';
+      });
+      (parsed.orcamentosMensais || []).forEach((o: any) => {
+        if (o.categoriaId === oldId) o.categoriaId = 'cat-sonhos-001';
+      });
+    }
+
     // Migration: Ensure PET category exists
     const hasPet = migratedCategories.some((c: any) => c.nome === 'PET');
     if (!hasPet) {
@@ -176,46 +262,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       logs: [],
     };
     
-    // Merge duplicate categories: "Gastos com casa" vs "Gastos para casa"
-    const normalizedNames = new Map<string, Category[]>();
-    finalData.categorias.forEach(cat => {
-      const normalized = cat.nome.toLowerCase().replace(/ (com|para|de) /g, ' ').trim();
-      if (!normalizedNames.has(normalized)) normalizedNames.set(normalized, []);
-      normalizedNames.get(normalized)!.push(cat);
-    });
-
-    for (const [name, cats] of normalizedNames.entries()) {
-      if (cats.length > 1) {
-        // Keep the one with most subcategories
-        cats.sort((a, b) => b.subcategorias.length - a.subcategorias.length);
-        const keeper = cats[0];
-        const toDelete = cats.slice(1);
-
-        toDelete.forEach(delCat => {
-          // Move subcategories to keeper
-          delCat.subcategorias.forEach(sub => {
-            if (!keeper.subcategorias.some(s => s.nome.toLowerCase().trim() === sub.nome.toLowerCase().trim())) {
-              keeper.subcategorias.push({ ...sub, categoriaPaiId: keeper.id });
-            }
-          });
-
-          // Remap lancamentos
-          finalData.lancamentos = finalData.lancamentos.map(l => 
-            l.categoriaId === delCat.id ? { ...l, categoriaId: keeper.id } : l
-          );
-
-          // Remap orcamentos
-          finalData.orcamentosMensais = finalData.orcamentosMensais.map(o => 
-            o.categoriaId === delCat.id ? { ...o, categoriaId: keeper.id } : o
-          );
-        });
-
-        // Delete from categories
-        finalData.categorias = finalData.categorias.filter(c => !toDelete.some(td => td.id === c.id));
-      }
-    }
-
-    return {
+    return syncOrcamentos({
       ...finalData,
       parcelamentos: (parsed.parcelamentos || []).map((p: any) => ({
         ...p,
@@ -251,28 +298,28 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           ...(parsed.configuracoes?.perfil || {})
         }
       }
-    };
+    });
   });
 
-  function applyCategoryMigration(migratedCategories: any[]) {
+  function applyCategoryMigration(migratedCategories: Category[]): Category[] {
       function toTitleCase(str: string) {
           return str.toLowerCase().split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
       }
 
       // 1. Ensure 'GASTOS COM A CASA' exists
-      const hasCasa = migratedCategories.some((c: any) => c.nome.toUpperCase() === 'GASTOS COM A CASA');
+      const hasCasa = migratedCategories.some((c: Category) => c.nome.toUpperCase() === 'GASTOS COM A CASA');
       if (!hasCasa) {
           const defaultCasa = DEFAULT_CATEGORIES.find(c => c.nome.toUpperCase() === 'GASTOS COM A CASA');
           if (defaultCasa) migratedCategories.push(defaultCasa);
       }
 
       // 2. Update 'DOAÇÃO E GENEROSIDADE' subcategories
-      const doacaoCat = migratedCategories.find((c: any) => c.nome.toUpperCase() === 'DOAÇÃO E GENEROSIDADE');
+      const doacaoCat = migratedCategories.find((c: Category) => c.nome.toUpperCase() === 'DOAÇÃO E GENEROSIDADE');
       if (doacaoCat) {
-          const dizimoSub = doacaoCat.subcategorias.find((s: any) => s.nome.toLowerCase() === 'dízimo');
+          const dizimoSub = doacaoCat.subcategorias.find((s: Subcategory) => s.nome.toLowerCase() === 'dízimo');
           if (dizimoSub) dizimoSub.nome = 'Dízimo e ofertas';
           
-          const hasRifas = doacaoCat.subcategorias.some((s: any) => s.nome.toLowerCase() === 'rifas');
+          const hasRifas = doacaoCat.subcategorias.some((s: Subcategory) => s.nome.toLowerCase() === 'rifas');
           if (!hasRifas) {
               doacaoCat.subcategorias.push({
                   id: crypto.randomUUID(),
@@ -286,7 +333,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
 
       // 3. Update 'SONHOS & PROJETOS' subcategories
-      const sonhosCat = migratedCategories.find((c: any) => c.nome.toUpperCase() === 'SONHOS & PROJETOS');
+      const sonhosCat = migratedCategories.find((c: Category) => c.id === 'cat-sonhos-001' || c.nome.toUpperCase() === 'SONHOS & PROJETOS');
       if (sonhosCat) {
           sonhosCat.subcategorias = [
               'Viagem a Europa', 'Sítio', 'Abrir empresa', 'Troca de carro', 'Comprar casa', 'Cirurgia plástica'
@@ -301,21 +348,35 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
 
       // 4. Update 'INVESTIMENTOS' subcategories
-      const investCat = migratedCategories.find((c: any) => c.nome.toUpperCase() === 'INVESTIMENTOS');
+      const investCat = migratedCategories.find((c: Category) => c.nome.toUpperCase() === 'INVESTIMENTOS');
       if (investCat) {
-          const keepSubcats = investCat.subcategorias.filter((s: any) => s.nome.toLowerCase() !== 'cdi');
-          const newSubs = ['ETFs', 'Criptomoedas', 'Moeda estrangeira', 'Ouro'];
-          investCat.subcategorias = [
-            ...keepSubcats.map((s: any, idx: number) => ({ ...s, ordem: idx })),
-            ...newSubs.map((name, idx) => ({
-                id: crypto.randomUUID(),
-                nome: name,
-                ativa: true,
-                ordem: keepSubcats.length + idx,
-                dataCriacao: new Date().toISOString(),
-                categoriaPaiId: investCat.id
-            }))
-          ];
+          const targetSubNames = ['Tesouro Direto', 'ETFs', 'CDB', 'Ações', 'Fundos de investimentos', 'Criptomoedas', 'Moeda estrangeira', 'Ouro'];
+          
+          investCat.subcategorias = targetSubNames.map((name, idx) => {
+              // Try to preserve existing subcategory if name matches
+              const existing = investCat.subcategorias.find(s => s.nome.toLowerCase() === name.toLowerCase());
+              if (existing) {
+                  return { ...existing, nome: name, ordem: idx };
+              }
+              // Create new if doesn't exist
+              return {
+                  id: crypto.randomUUID(),
+                  nome: name,
+                  ativa: true,
+                  ordem: idx,
+                  dataCriacao: new Date().toISOString(),
+                  categoriaPaiId: investCat.id
+              };
+          }).filter((sub, index, self) => 
+            // Ensure no duplicates by name (if multiple matched for some reason)
+            index === self.findIndex((s) => s.nome.toLowerCase() === sub.nome.toLowerCase())
+          );
+      }
+
+      // 6. Remove 'Lazer Noturno' from 'DESPESAS PESSOAIS'
+      const pesCat = migratedCategories.find((c: Category) => c.nome.toUpperCase() === 'DESPESAS PESSOAIS');
+      if (pesCat) {
+          pesCat.subcategorias = pesCat.subcategorias.filter((s: Subcategory) => s.nome.toLowerCase() !== 'lazer noturno');
       }
 
       // 5. Update various categories with new subcategories
@@ -435,49 +496,45 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
       // Helper to get realized value for a category/month/year
       const getRealized = (catId: string, month: number, year: number) => {
-        return data.lancamentos
-          .filter(l => l.categoriaId === catId && l.mes === month && l.ano === year && l.tipo === 'realizado')
-          .reduce((acc, l) => acc + l.valor, 0);
+        return libGetRealized(data, catId, month, year);
       };
 
       // Helper to get budgeted value for a category/month/year
       const getBudgeted = (catId: string, month: number, year: number) => {
-        return data.orcamentosMensais
-          .filter(o => o.categoriaId === catId && o.mes === month && o.ano === year)
-          .reduce((acc, o) => acc + (o.valorOrcado || 0), 0);
+        return libGetBudgeted(data, catId, month, year);
       };
 
       const totalRendaMes = data.lancamentos
         .filter(l => l.mes === currentMonth && l.ano === currentYear && l.tipo === 'realizado' && data.categorias.find(c => c.id === l.categoriaId)?.tipo === 'renda')
-        .reduce((acc, l) => acc + l.valor, 0);
+        .reduce((acc, l) => acc + toCents(l.valor), 0);
 
       const totalGastoMes = data.lancamentos
         .filter(l => l.mes === currentMonth && l.ano === currentYear && l.tipo === 'realizado' && data.categorias.find(c => c.id === l.categoriaId)?.tipo !== 'renda')
-        .reduce((acc, l) => acc + l.valor, 0);
+        .reduce((acc, l) => acc + toCents(l.valor), 0);
 
       // 1. Categoria que cresceu acima de 15% (CRÍTICO) ou 10-15% (ATENÇÃO)
       data.categorias.forEach(cat => {
         const prevMonth = currentMonth === 0 ? 11 : currentMonth - 1;
         const prevYear = currentMonth === 0 ? currentYear - 1 : currentYear;
         
-        const valAtual = getRealized(cat.id, currentMonth, currentYear);
-        const valAnterior = getRealized(cat.id, prevMonth, prevYear);
+        const valAtualCents = toCents(getRealized(cat.id, currentMonth, currentYear));
+        const valAnteriorCents = toCents(getRealized(cat.id, prevMonth, prevYear));
 
-        if (valAnterior > 0) {
-          const varPercent = ((valAtual - valAnterior) / valAnterior) * 100;
+        if (valAnteriorCents > 0) {
+          const varPercent = ((valAtualCents - valAnteriorCents) / valAnteriorCents) * 100;
           if (varPercent > 15) {
             newInsights.push({
               id: `crescimento-critico-${cat.id}-${currentMonth}-${currentYear}`,
               tipo: 'critico',
               titulo: `${cat.nome} cresceu ${varPercent.toFixed(0)}% este mês`,
-              descricao: `Seus gastos com ${cat.nome} subiram de ${formatCurrency(valAnterior)} para ${formatCurrency(valAtual)}.`,
+              descricao: `Seus gastos com ${cat.nome} subiram de ${formatCurrency(fromCents(valAnteriorCents))} para ${formatCurrency(fromCents(valAtualCents))}.`,
               categoriaId: cat.id,
               mes: currentMonth,
               ano: currentYear,
               lido: false,
               dispensado: false,
               geradoEm: new Date().toISOString(),
-              dados: { varPercentual: varPercent, valorAtual: valAtual, valorAnterior: valAnterior }
+              dados: { varPercentual: varPercent, valorAtual: fromCents(valAtualCents), valorAnterior: fromCents(valAnteriorCents) }
             });
           } else if (varPercent > 10) {
             newInsights.push({
@@ -491,7 +548,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
               lido: false,
               dispensado: false,
               geradoEm: new Date().toISOString(),
-              dados: { varPercentual: varPercent, valorAtual: valAtual, valorAnterior: valAnterior }
+              dados: { varPercentual: varPercent, valorAtual: fromCents(valAtualCents), valorAnterior: fromCents(valAnteriorCents) }
             });
           }
         }
@@ -501,8 +558,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       if (totalRendaMes > 0) {
         data.categorias.forEach(cat => {
           if (cat.tipo === 'renda') return;
-          const realizado = getRealized(cat.id, currentMonth, currentYear);
-          const percentRenda = (realizado / totalRendaMes) * 100;
+          const realizadoCents = toCents(getRealized(cat.id, currentMonth, currentYear));
+          const percentRenda = (realizadoCents / totalRendaMes) * 100;
           if (percentRenda > 30) {
             newInsights.push({
               id: `consumo-renda-alto-${cat.id}-${currentMonth}-${currentYear}`,
@@ -526,7 +583,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           id: `saldo-negativo-${currentMonth}-${currentYear}`,
           tipo: 'critico',
           titulo: `Alerta: Saldo negativo este mês`,
-          descricao: `Seus gastos totais (${formatCurrency(totalGastoMes)}) superaram sua renda realizada (${formatCurrency(totalRendaMes)}).`,
+          descricao: `Seus gastos totais (${formatCurrency(fromCents(totalGastoMes))}) superaram sua renda realizada (${formatCurrency(fromCents(totalRendaMes))}).`,
           categoriaId: null,
           mes: currentMonth,
           ano: currentYear,
@@ -600,17 +657,17 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       });
 
       // 7. Liberdade Financeira (LIBERDADE)
-      const metaLF = data.metaIndependenciaFinanceira || 250000;
+      const metaLF = toCents(data.metaIndependenciaFinanceira || 250000);
       const patrimonioLF = data.lancamentos
         .filter(l => l.tipo === 'realizado' && data.categorias.find(c => c.id === l.categoriaId)?.tipo === 'investimento')
-        .reduce((acc, l) => acc + l.valor, 0);
+        .reduce((acc, l) => acc + toCents(l.valor), 0);
       
       const progressoLF = (patrimonioLF / metaLF) * 100;
       
       // Média de aportes últimos 3 meses
       const getAporteMes = (m: number, y: number) => data.lancamentos
         .filter(l => l.mes === m && l.ano === y && l.tipo === 'realizado' && data.categorias.find(c => c.id === l.categoriaId)?.tipo === 'investimento')
-        .reduce((acc, l) => acc + l.valor, 0);
+        .reduce((acc, l) => acc + toCents(l.valor), 0);
       
       const m1 = currentMonth;
       const y1 = currentYear;
@@ -633,7 +690,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         id: `liberdade-financeira-status`,
         tipo: 'liberdade',
         titulo: `Independência Financeira: ${progressoLF.toFixed(1)}%`,
-        descricao: `Seu patrimônio investido é de ${formatCurrency(patrimonioLF)}. ${tempoDesc}`,
+        descricao: `Seu patrimônio investido é de ${formatCurrency(fromCents(patrimonioLF))}. ${tempoDesc}`,
         categoriaId: null,
         mes: currentMonth,
         ano: currentYear,
@@ -644,16 +701,16 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
       // 8. Orçamento atingido (CRÍTICO > 90%, ATENÇÃO > 70%)
       data.categorias.forEach(cat => {
-        const realizado = getRealized(cat.id, currentMonth, currentYear);
-        const orcado = getBudgeted(cat.id, currentMonth, currentYear);
-        if (orcado > 0) {
-          const percent = (realizado / orcado) * 100;
+        const realizadoCents = toCents(getRealized(cat.id, currentMonth, currentYear));
+        const orcadoCents = toCents(getBudgeted(cat.id, currentMonth, currentYear));
+        if (orcadoCents > 0) {
+          const percent = (realizadoCents / orcadoCents) * 100;
           if (percent >= 90) {
             newInsights.push({
               id: `orcamento-critico-${cat.id}-${currentMonth}-${currentYear}`,
               tipo: 'critico',
               titulo: `Orçamento de ${cat.nome} quase esgotado`,
-              descricao: `Você já utilizou ${percent.toFixed(0)}% do planejado para ${cat.nome} (${formatCurrency(realizado)} de ${formatCurrency(orcado)}).`,
+              descricao: `Você já utilizou ${percent.toFixed(0)}% do planejado para ${cat.nome} (${formatCurrency(fromCents(realizadoCents))} de ${formatCurrency(fromCents(orcadoCents))}).`,
               categoriaId: cat.id,
               mes: currentMonth,
               ano: currentYear,
@@ -697,7 +754,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       });
 
       // Filter out existing insights to avoid duplicates (based on ID)
-      setData(prev => {
+      safeUpdate(prev => {
         const existingIds = new Set(prev.insights.map(i => i.id));
         const uniqueNewInsights = newInsights.filter(i => !existingIds.has(i.id));
         
@@ -714,44 +771,75 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, [data.lancamentos, data.orcamentosMensais, data.onboarded, data.metaIndependenciaFinanceira]);
 
   const updateFamilia = (familia: Familia) => {
-    setData(prev => ({ ...prev, familia }));
+    safeUpdate(prev => ({ ...prev, familia }));
   };
 
   // Effect to watch for newly conquered debts
-  useEffect(() => {
-    const newlyConquered = data.dividas.filter(d => d.status === 'quitada' && !d.conquistada);
-    if (newlyConquered.length > 0) {
-      newlyConquered.forEach(d => {
-        showToast(`Dívida '${d.nome}' quitada! 🎉`, 'success');
-        // Mark as conquered in state to avoid multiple toasts
-        updateDivida(d.id, { conquistada: true });
-      });
-    }
-  }, [data.dividas]);
+  // useEffect(() => {
+  //   const newlyConquered = data.dividas.filter(d => d.status === 'quitada' && !d.conquistada);
+  //   if (newlyConquered.length > 0) {
+  //     newlyConquered.forEach(d => {
+  //       showToast(`Dívida '${d.nome}' quitada! 🎉`, 'success');
+  //       updateDivida(d.id, { conquistada: true });
+  //     });
+  //   }
+  // }, [data.dividas]);
 
   const addAuditLog = (log: Omit<AuditLog, 'id' | 'timestamp' | 'usuario'>) => {
     // Audit logging disabled as requested by user
   };
 
+  const validateIds = (catId: string, subcatId: string, categories: Category[]) => {
+    const cat = categories.find(c => c.id === catId);
+    if (!cat) return false;
+    const sub = cat.subcategorias.find(s => s.id === subcatId);
+    return !!sub;
+  };
+
+  // --- INFRAESTRUTURA DE PERSISTÊNCIA ---
+  const safeUpdate = (updater: (prev: FinanceData) => FinanceData) => {
+    const proximoEstadoPreSync = updater(data);
+    const proximoEstadoSync = syncDividas(syncSonhosProjetos(syncOrcamentos(proximoEstadoPreSync)));
+    
+    // Stop the update loop by checking if state actually changed
+    if (JSON.stringify(proximoEstadoSync) === JSON.stringify(data)) {
+      console.log('--- SAFEUPDATE: No change ---');
+      return;
+    }
+    console.log('--- SAFEUPDATE: Data changed ---');
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(proximoEstadoSync));
+    dispatch({ type: 'UPDATE_DATA', payload: proximoEstadoSync });
+  };
+
   const addLancamento = (lancamento: Omit<Lancamento, 'id' | 'dataCriacao'>) => {
-    const newLancamento: Lancamento = {
-      ...lancamento,
-      id: crypto.randomUUID(),
-      dataCriacao: new Date().toISOString(),
-      valor: roundCurrency(lancamento.valor)
+    const safeLancamento = {
+        ...lancamento,
+        valor: typeof lancamento.valor === 'string' ? parseFloat(lancamento.valor) : lancamento.valor
     };
-    setData(prev => {
-      const newData = {
-        ...prev,
-        lancamentos: [...(prev.lancamentos || []), newLancamento]
+
+    if (!validateLancamento(safeLancamento)) {
+       showToast('Dados de lançamento inválidos (verifique valor, descrição e categoria)!', 'error');
+       return;
+    }
+    
+    safeUpdate(prev => {
+      if (!validateIds(safeLancamento.categoriaId, safeLancamento.subcategoriaId, prev.categorias)) {
+        console.error("Invalid transaction: Category or Subcategory not found");
+        showToast('Categoria ou subcategoria não encontrada!', 'error');
+        return prev;
+      }
+      
+      const newLancamento: Lancamento = {
+        ...safeLancamento,
+        id: crypto.randomUUID(),
+        dataCriacao: new Date().toISOString(),
+        valor: fromCents(toCents(safeLancamento.valor))
       };
-      return syncSonhosProjetos(newData);
-    });
-    addAuditLog({
-      entidade: 'lancamento',
-      entidadeId: newLancamento.id,
-      acao: 'criacao',
-      detalhes: `Lançamento criado: ${newLancamento.descricao || 'Sem descrição'} - ${newLancamento.valor}`
+
+      return {
+        ...prev,
+        lancamentos: [...prev.lancamentos, newLancamento]
+      };
     });
   };
 
@@ -763,7 +851,12 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   // Improved updateLancamento that handles the "slot" logic (month/year/subcat/type)
   const upsertLancamento = (ano: number, mes: number, subcatId: string, catId: string, tipo: 'orcado' | 'realizado', valor: number) => {
     const roundedValor = roundCurrency(valor);
-    setData(prev => {
+    safeUpdate(prev => {
+      if (!validateIds(catId, subcatId, prev.categorias)) {
+        console.error("Invalid upsert: Category or Subcategory not found");
+        return prev;
+      }
+      
       const existingIndex = prev.lancamentos.findIndex(l => 
         l.ano === ano && l.mes === mes && l.subcategoriaId === subcatId && l.tipo === tipo
       );
@@ -789,7 +882,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const updateLancamentoFull = (id: string, updates: Partial<Lancamento>) => {
     const now = new Date().toISOString();
-    setData(prev => {
+    safeUpdate(prev => {
       const lancamentos = prev.lancamentos || [];
       const index = lancamentos.findIndex(l => l.id === id);
       if (index === -1) return prev;
@@ -815,25 +908,51 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
       const newLancamentos = [...lancamentos];
       newLancamentos[index] = updated;
-      return syncDividas(syncSonhosProjetos({ ...prev, lancamentos: newLancamentos }));
+      return { ...prev, lancamentos: newLancamentos };
     });
   };
 
   const removeLancamento = (id: string) => {
-    setData(prev => {
+    safeUpdate(prev => {
       const lancamento = (prev.lancamentos || []).find(l => l.id === id);
-      if (lancamento) {
-        addAuditLog({
-          entidade: 'lancamento',
-          entidadeId: id,
-          acao: 'exclusao',
-          detalhes: `Lançamento removido: ${lancamento.descricao || 'Sem descrição'}`
-        });
-      }
-      const newData = {
+      if (!lancamento) return prev;
+
+      addAuditLog({
+        entidade: 'lancamento',
+        entidadeId: id,
+        acao: 'exclusao',
+        detalhes: `Lançamento removido: ${lancamento.descricao || 'Sem descrição'}`
+      });
+
+      let newData: FinanceData = {
         ...prev,
         lancamentos: (prev.lancamentos || []).filter(l => l.id !== id)
       };
+
+      if (lancamento.parcelamentoId) {
+        const pId = lancamento.parcelamentoId;
+        const parcelamento = prev.parcelamentos.find(p => p.id === pId);
+        if (parcelamento) {
+          const kept = newData.lancamentos.filter(l => l.parcelamentoId === pId);
+          const totalCents = kept.reduce((acc, l) => acc + toCents(l.valor), 0);
+          const realized = kept.filter(l => l.tipo === 'realizado').length;
+          const isCancelled = kept.length === 0;
+
+          newData.parcelamentos = prev.parcelamentos.map(p => {
+            if (p.id === pId) {
+              return {
+                ...p,
+                statusAtivo: !isCancelled,
+                valorTotal: fromCents(totalCents),
+                totalParcelas: kept.length,
+                parcelasEfetivamentePagas: realized
+              };
+            }
+            return p;
+          });
+        }
+      }
+
       return syncDividas(syncSonhosProjetos(newData));
     });
   };
@@ -841,7 +960,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const addCategory = (category: Omit<Category, 'id' | 'dataCriacao' | 'dataAtualizacao' | 'ordem' | 'ativa'>) => {
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
-    setData(prev => ({
+    safeUpdate(prev => ({
       ...prev,
       categorias: [...prev.categorias, { 
         ...category, 
@@ -863,7 +982,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const updateCategory = (id: string, updates: Partial<Category>) => {
     const now = new Date().toISOString();
-    setData(prev => ({
+    safeUpdate(prev => ({
       ...prev,
       categorias: prev.categorias.map(c => 
         c.id === id ? { ...c, ...updates, dataAtualizacao: now } : c
@@ -878,7 +997,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const archiveCategory = (id: string) => {
-    setData(prev => ({
+    safeUpdate(prev => ({
       ...prev,
       categorias: prev.categorias.map(c => 
         c.id === id ? { 
@@ -896,32 +1015,57 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     });
   };
 
-  const removeCategory = (id: string) => {
-    setData(prev => {
+  const removeCategory = (id: string, reassignToId?: string) => {
+    safeUpdate(prev => {
       const hasLancamentos = prev.lancamentos.some(l => l.categoriaId === id);
-      if (hasLancamentos) {
-        alert('Não é possível excluir permanentemente uma categoria com lançamentos vinculados. Use o arquivamento.');
+      
+      // Validation: Migration required if transactions exist
+      if (hasLancamentos && (!reassignToId || !prev.categorias.some(c => c.id === reassignToId))) {
+        alert('Não é possível excluir permanentemente ou re-vincular sem uma categoria de destino válida.');
         return prev;
       }
+
+      // 1. Process affected transactions (Reassign or Remover)
+      let updatedLancamentos = prev.lancamentos;
+      if (hasLancamentos && reassignToId) {
+        updatedLancamentos = prev.lancamentos.map(l => 
+          l.categoriaId === id ? { ...l, categoriaId: reassignToId, subcategoriaId: '' } : l
+        );
+      } else if (hasLancamentos) {
+        updatedLancamentos = prev.lancamentos.filter(l => l.categoriaId !== id);
+      }
+      
+      // 2. Identify dependent subcategory IDs
+      const category = prev.categorias.find(c => c.id === id);
+      const subcatIds = category?.subcategorias.map(s => s.id) || [];
+
+      // 3. Filter out entities
       return {
         ...prev,
-        categorias: prev.categorias.filter(c => c.id !== id)
+        categorias: prev.categorias.filter(c => c.id !== id),
+        lancamentos: updatedLancamentos,
+        orcamentosMensais: prev.orcamentosMensais.filter(o => o.categoriaId !== id),
+        sonhosProjetos: prev.sonhosProjetos.filter(s => s.subcategoriaId ? !subcatIds.includes(s.subcategoriaId) : true),
+        patrimonio: prev.patrimonio.filter(p => !subcatIds.includes(p.subcategoria)),
+        parcelamentos: prev.parcelamentos.filter(p => !subcatIds.includes(p.subcategoriaId)),
+        dividas: prev.dividas.filter(d => !subcatIds.includes(d.subcategoriaId))
       };
     });
+
     addAuditLog({
       entidade: 'categoria',
       entidadeId: id,
       acao: 'exclusao',
-      detalhes: `Categoria removida permanentemente`
+      detalhes: `Categoria removida ${reassignToId ? 'com migração de lançamentos' : 'permanentemente'}`
     });
   };
 
   const addSubcategory = (categoryId: string, name: string) => {
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
-    setData(prev => {
+    safeUpdate(prev => {
       const cat = prev.categorias.find(c => c.id === categoryId);
-      const isSonhos = cat?.nome === 'SONHOS & PROJETOS';
+      const isSonhos = cat?.id === 'cat-sonhos-001' || cat?.nome === 'SONHOS & PROJETOS';
       
       let updatedSonhos = prev.sonhosProjetos;
       if (isSonhos) {
@@ -962,7 +1106,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           : c
       );
 
-      return syncSonhosProjetos({ ...prev, categorias: updatedCategorias, sonhosProjetos: updatedSonhos });
+      return { ...prev, categorias: updatedCategorias, sonhosProjetos: updatedSonhos };
     });
 
     addAuditLog({
@@ -974,9 +1118,9 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const updateSubcategory = (categoryId: string, subcatId: string, updates: Partial<Subcategory>) => {
-    setData(prev => {
+    safeUpdate(prev => {
       const cat = prev.categorias.find(c => c.id === categoryId);
-      const isSonhos = cat?.nome === 'SONHOS & PROJETOS';
+      const isSonhos = cat?.id === 'cat-sonhos-001' || cat?.nome === 'SONHOS & PROJETOS';
       
       let updatedSonhos = prev.sonhosProjetos;
       if (isSonhos && updates.nome) {
@@ -1023,7 +1167,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           : c
       );
 
-      return syncSonhosProjetos({ ...prev, categorias: updatedCategorias, sonhosProjetos: updatedSonhos });
+      return { ...prev, categorias: updatedCategorias, sonhosProjetos: updatedSonhos };
     });
 
     addAuditLog({
@@ -1035,9 +1179,9 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const archiveSubcategory = (categoryId: string, subcatId: string) => {
-    setData(prev => {
+    safeUpdate(prev => {
       const cat = prev.categorias.find(c => c.id === categoryId);
-      const isSonhos = cat?.nome === 'SONHOS & PROJETOS';
+      const isSonhos = cat?.id === 'cat-sonhos-001' || cat?.nome === 'SONHOS & PROJETOS';
       
       let updatedSonhos = prev.sonhosProjetos;
       if (isSonhos) {
@@ -1057,7 +1201,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
           : c
       );
 
-      return syncSonhosProjetos({ ...prev, categorias: updatedCategorias, sonhosProjetos: updatedSonhos });
+      return { ...prev, categorias: updatedCategorias, sonhosProjetos: updatedSonhos };
     });
 
     addAuditLog({
@@ -1071,33 +1215,38 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const removeSubcategory = (categoryId: string, subcatId: string) => {
     setData(prev => {
       const cat = prev.categorias.find(c => c.id === categoryId);
-      const isSonhos = cat?.nome === 'SONHOS & PROJETOS';
-      
-      let updatedSonhos = prev.sonhosProjetos;
-      if (isSonhos) {
-        updatedSonhos = prev.sonhosProjetos.map(s => 
-          s.subcategoriaId === subcatId ? { ...s, ativa: false } : s
-        );
-      }
-
       const hasLancamentos = prev.lancamentos.some(l => l.subcategoriaId === subcatId);
+
+      // Branch: Soft Delete (Archive) vs Hard Delete
       if (hasLancamentos) {
-        // If it has lancamentos, we just archive the subcategory and the dream
+        // Just archive - preserve history
         const updatedCategorias = prev.categorias.map(c => 
           c.id === categoryId 
             ? { ...c, subcategorias: c.subcategorias.map(s => s.id === subcatId ? { ...s, ativa: false } : s) }
             : c
         );
-        return syncSonhosProjetos({ ...prev, categorias: updatedCategorias, sonhosProjetos: updatedSonhos });
+        const updatedSonhos = prev.sonhosProjetos.map(s => 
+          s.subcategoriaId === subcatId ? { ...s, ativa: false } : s
+        );
+        return syncOrcamentos(syncSonhosProjetos({ ...prev, categorias: updatedCategorias, sonhosProjetos: updatedSonhos }));
       }
 
-      // If no lancamentos, we can remove subcategory but we still archive the dream as per request
+      // Hard Delete
       const updatedCategorias = prev.categorias.map(c => 
         c.id === categoryId 
           ? { ...c, subcategorias: c.subcategorias.filter(s => s.id !== subcatId) }
           : c
       );
-      return syncSonhosProjetos({ ...prev, categorias: updatedCategorias, sonhosProjetos: updatedSonhos });
+      
+      return syncOrcamentos(syncSonhosProjetos({
+        ...prev,
+        categorias: updatedCategorias,
+        sonhosProjetos: prev.sonhosProjetos.filter(s => s.subcategoriaId !== subcatId),
+        orcamentosMensais: prev.orcamentosMensais.filter(o => o.subcategoriaId !== subcatId),
+        patrimonio: prev.patrimonio.filter(p => p.subcategoria !== subcatId),
+        parcelamentos: prev.parcelamentos.filter(p => p.subcategoriaId !== subcatId),
+        dividas: prev.dividas.filter(d => d.subcategoriaId !== subcatId)
+      }));
     });
 
     addAuditLog({
@@ -1108,33 +1257,49 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     });
   };
 
+  const removeAllSubcategories = () => {
+    safeUpdate(prev => {
+      const updatedCategorias = prev.categorias.map(c => ({
+        ...c,
+        subcategorias: [] 
+      }));
+
+      return { ...prev, categorias: updatedCategorias };
+    });
+  };
+
   const reorderCategories = (newOrder: Category[]) => {
-    setData(prev => ({
+    safeUpdate(prev => ({
       ...prev,
       categorias: newOrder.map((c, idx) => ({ ...c, ordem: idx }))
     }));
   };
 
   const addDivida = (divida: Omit<Divida, 'id' | 'totalPago' | 'saldoRestante' | 'progresso' | 'status' | 'conquistada' | 'historicoPagamentos'>) => {
+    if (!validateDivida(divida)) {
+        showToast('Dados de dívida inválidos!', 'error');
+        return;
+    }
     const id = crypto.randomUUID();
-    setData(prev => {
+    safeUpdate(prev => {
       const newDivida: Divida = { 
         ...divida, 
         id,
         totalPago: 0,
-        saldoRestante: divida.valorContratado,
+        saldoRestante: sanitizeCurrency(divida.valorContratado),
         progresso: 0,
         status: 'em_dia',
         conquistada: false,
         historicoPagamentos: [],
-        valorContratado: roundCurrency(divida.valorContratado),
-        valorParcela: roundCurrency(divida.valorParcela),
-        saldoQuitacaoVista: roundCurrency(divida.saldoQuitacaoVista)
+        valorContratado: sanitizeCurrency(divida.valorContratado),
+        valorParcela: sanitizeCurrency(divida.valorParcela),
+        saldoQuitacaoVista: sanitizeCurrency(divida.saldoQuitacaoVista)
       };
-      return syncDividas({
+      
+      return {
         ...prev,
         dividas: [...prev.dividas, newDivida]
-      });
+      };
     });
     addAuditLog({
       entidade: 'divida',
@@ -1145,11 +1310,24 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const updateDivida = (id: string, updates: Partial<Divida>) => {
-    setData(prev => {
+    if (updates.valorContratado !== undefined && updates.valorContratado <= 0) {
+      showToast('O valor da dívida deve ser positivo!', 'error');
+      return;
+    }
+    
+    // Ensure all numeric fields are rounded
+    const roundedUpdates = {
+      ...updates,
+      ...(updates.valorContratado !== undefined && { valorContratado: sanitizeCurrency(updates.valorContratado) }),
+      ...(updates.valorParcela !== undefined && { valorParcela: sanitizeCurrency(updates.valorParcela) }),
+      ...(updates.saldoQuitacaoVista !== undefined && { saldoQuitacaoVista: sanitizeCurrency(updates.saldoQuitacaoVista) }),
+    };
+
+    safeUpdate(prev => {
       const newDividas = prev.dividas.map(d => 
-        d.id === id ? { ...d, ...updates } : d
+        d.id === id ? { ...d, ...roundedUpdates } : d
       );
-      return syncDividas({ ...prev, dividas: newDividas });
+      return { ...prev, dividas: newDividas };
     });
     addAuditLog({
       entidade: 'divida',
@@ -1160,34 +1338,36 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const removeDivida = (id: string) => {
-    setData(prev => {
+    safeUpdate(prev => {
       const divida = prev.dividas.find(d => d.id === id);
-      if (divida) {
-        addAuditLog({
-          entidade: 'divida',
-          entidadeId: id,
-          acao: 'exclusao',
-          detalhes: `Dívida removida: ${divida.nome}`
-        });
-      }
+      if (!divida) return prev;
+
+      addAuditLog({
+        entidade: 'divida',
+        entidadeId: id,
+        acao: 'exclusao',
+        detalhes: `Dívida removida permanentemente: ${divida.nome}`
+      });
+
       return {
         ...prev,
-        dividas: prev.dividas.filter(d => d.id !== id)
+        dividas: prev.dividas.filter(d => d.id !== id),
+        lancamentos: prev.lancamentos.filter(l => !divida.historicoPagamentos.some(p => p.lancamentoId === l.id))
       };
     });
   };
 
   const updateDividaParcelas = (id: string, increment: number) => {
-    setData(prev => {
+    safeUpdate(prev => {
       const newDividas = prev.dividas.map(d => 
         d.id === id ? { ...d, parcelasPagas: Math.min(d.quantidadeParcelas, d.parcelasPagas + increment) } : d
       );
-      return syncDividas({ ...prev, dividas: newDividas });
+      return { ...prev, dividas: newDividas };
     });
   };
 
   const addMeta = (meta: Omit<Meta, 'id'>) => {
-    setData(prev => ({
+    safeUpdate(prev => ({
       ...prev,
       metas: [...prev.metas, { 
         ...meta, 
@@ -1200,126 +1380,12 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const updateMetaAporte = (id: string, valor: number) => {
     const roundedValor = roundCurrency(valor);
-    setData(prev => ({
+    safeUpdate(prev => ({
       ...prev,
       metas: prev.metas.map(m => 
         m.id === id ? { ...m, valorAcumulado: roundCurrency(m.valorAcumulado + roundedValor) } : m
       )
     }));
-  };
-
-  const syncDividas = (currentData: FinanceData): FinanceData => {
-    const now = new Date();
-    
-    const updatedDividas = currentData.dividas.map(divida => {
-      const relatedLancamentos = currentData.lancamentos.filter(l => 
-        l.subcategoriaId === divida.subcategoriaId && l.tipo === 'realizado'
-      );
-
-      const historicoPagamentos = relatedLancamentos.map(l => ({
-        lancamentoId: l.id,
-        data: l.data || new Date(l.ano, l.mes, l.dia || 1).toISOString(),
-        valor: l.valor,
-        numeroParcela: l.numeroParcela || 0,
-        totalParcelas: l.totalParcelas || divida.quantidadeParcelas,
-        origem: "via lançamento"
-      })).sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime());
-
-      const totalPago = roundCurrency(historicoPagamentos.reduce((acc, p) => acc + p.valor, 0));
-      const parcelasPagas = historicoPagamentos.length;
-      const saldoRestante = roundCurrency(divida.valorContratado - totalPago);
-      const progresso = divida.quantidadeParcelas > 0 ? parcelasPagas / divida.quantidadeParcelas : 0;
-      
-      const startDate = parseISO(divida.dataInicio);
-      const monthsDiff = (now.getFullYear() - startDate.getFullYear()) * 12 + (now.getMonth() - startDate.getMonth());
-      const parcelasEsperadasAteHoje = Math.min(Math.max(0, monthsDiff + 1), divida.quantidadeParcelas);
-
-      let status: StatusDivida = 'em_dia';
-      if (parcelasPagas >= divida.quantidadeParcelas) {
-        status = 'quitada';
-      } else if (parcelasPagas < parcelasEsperadasAteHoje - 1) {
-        status = 'atrasado';
-      } else if (parcelasPagas === parcelasEsperadasAteHoje - 1) {
-        status = 'atencao';
-      }
-
-      const conquistada = status === 'quitada';
-
-      // Generate insight if just paid off
-      if (conquistada && !divida.conquistada) {
-        const insightId = `divida-quitada-${divida.id}`;
-        const existingInsight = currentData.insights.find(i => i.id === insightId);
-        if (!existingInsight) {
-          currentData.insights.unshift({
-            id: insightId,
-            tipo: 'conquista',
-            titulo: `Dívida Quitada: ${divida.nome}!`,
-            descricao: `Parabéns! Você finalizou o pagamento de ${divida.nome}. Menos uma preocupação no seu orçamento! 🎉`,
-            categoriaId: null,
-            mes: now.getMonth(),
-            ano: now.getFullYear(),
-            lido: false,
-            dispensado: false,
-            geradoEm: now.toISOString()
-          });
-        }
-      }
-
-      return {
-        ...divida,
-        totalPago,
-        parcelasPagas,
-        saldoRestante,
-        progresso,
-        status,
-        conquistada,
-        historicoPagamentos
-      };
-    });
-
-    return { ...currentData, dividas: updatedDividas };
-  };
-
-  const syncSonhosProjetos = (currentData: FinanceData): FinanceData => {
-    let categories = [...currentData.categorias];
-    let lancamentos = [...currentData.lancamentos];
-    let sonhosProjetosList = [...currentData.sonhosProjetos];
-
-    const sonhosCategories = categories.filter(c => c.nome.toUpperCase() === 'SONHOS & PROJETOS');
-    
-    if (sonhosCategories.length > 0) {
-      const keeper = sonhosCategories[0];
-      const toDelete = sonhosCategories.slice(1);
-      
-      keeper.subcategorias = [];
-      categories = categories.filter(c => c.id === keeper.id || !toDelete.some(del => del.id === c.id));
-      
-      // Update lancamentos reference to keeperId, remove subcategoriaId if it was from deleted subcats
-      lancamentos = lancamentos.map(l => {
-          if (toDelete.some(delCat => delCat.id === l.categoriaId)) {
-             return { ...l, categoriaId: keeper.id, subcategoriaId: undefined };
-          }
-          if (keeper.id === l.categoriaId) {
-             return { ...l, subcategoriaId: undefined };
-          }
-          return l;
-      });
-      
-      sonhosProjetosList = [];
-    }
-
-    const updatedSonhos = sonhosProjetosList.map(sonho => {
-      const aportes = lancamentos.filter(l => l.subcategoriaId === sonho.subcategoriaId).map(l => ({
-        lancamentoId: l.id,
-        data: l.data || new Date(l.ano, l.mes, l.dia || 1).toISOString(),
-        valor: l.valor,
-        status: (l.tipo === 'realizado' ? 'confirmado' : 'previsto') as any,
-      }));
-      const valorAcumulado = aportes.reduce((acc, a) => acc + a.valor, 0);
-      return { ...sonho, valorAcumulado, aportes };
-    });
-
-    return { ...currentData, categorias, lancamentos, sonhosProjetos: updatedSonhos };
   };
 
   const addSonhoProjeto = (sonho: Omit<SonhoProjeto, 'id' | 'valorAcumulado' | 'progresso' | 'aportes' | 'subcategoriaId' | 'conquistado' | 'origemCriacao'>) => {
@@ -1329,7 +1395,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
     
     setData(prev => {
       // Find "SONHOS & PROJETOS" category
-      const catSonhos = prev.categorias.find(c => c.nome === 'SONHOS & PROJETOS');
+      const catSonhos = prev.categorias.find(c => c.id === 'cat-sonhos-001' || c.nome === 'SONHOS & PROJETOS');
       if (!catSonhos) return prev;
 
       const newSubcat: Subcategory = {
@@ -1418,15 +1484,19 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         subcategorias: c.subcategorias.filter(sc => sc.id !== sonho.subcategoriaId)
       }));
 
-      return { ...prev, sonhosProjetos: updatedSonhos, categorias: updatedCategorias };
+      return syncSonhosProjetos({ ...prev, sonhosProjetos: updatedSonhos, categorias: updatedCategorias });
     });
   };
 
-  const addPatrimonio = (patrimonio: Omit<Patrimonio, 'id' | 'criadoEm' | 'ativo'>) => {
+  const addPatrimonio = (patrimonio: Omit<Patrimonio, 'id' | 'dataCriacao' | 'ativo'>) => {
+    if (!validatePatrimonio(patrimonio)) {
+        showToast('Dados de patrimônio inválidos!', 'error');
+        return;
+    }
     const newPatrimonio: Patrimonio = {
       ...patrimonio,
       id: crypto.randomUUID(),
-      criadoEm: new Date().toISOString(),
+      dataCriacao: new Date().toISOString(),
       ativo: true
     };
     setData(prev => ({
@@ -1446,9 +1516,20 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const updatePatrimonio = (id: string, updates: Partial<Patrimonio>) => {
+    if (updates.valorAquisicao !== undefined && updates.valorAquisicao <= 0) {
+      showToast('O valor de aquisição deve ser positivo!', 'error');
+      return;
+    }
+
+    // Ensure numeric fields are rounded
+    const roundedUpdates = {
+      ...updates,
+      ...(updates.valorAquisicao !== undefined && { valorAquisicao: roundCurrency(updates.valorAquisicao) }),
+    };
+
     setData(prev => ({
       ...prev,
-      patrimonio: (prev.patrimonio || []).map(p => p.id === id ? { ...p, ...updates } : p),
+      patrimonio: (prev.patrimonio || []).map(p => p.id === id ? { ...p, ...roundedUpdates } : p),
       logs: [{
         id: crypto.randomUUID(),
         timestamp: new Date().toISOString(),
@@ -1464,19 +1545,21 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const removePatrimonio = (id: string) => {
     const item = data.patrimonio?.find(p => p.id === id);
-    setData(prev => ({
-      ...prev,
-      patrimonio: (prev.patrimonio || []).filter(p => p.id !== id),
-      logs: [{
-        id: crypto.randomUUID(),
-        timestamp: new Date().toISOString(),
-        entidade: 'patrimonio' as any,
+    setData(prev => {
+      const newData = {
+        ...prev,
+        patrimonio: (prev.patrimonio || []).filter(p => p.id !== id)
+      };
+      
+      addAuditLog({
+        entidade: 'patrimonio',
         entidadeId: id,
         acao: 'exclusao',
-        detalhes: `Patrimônio removido: ${item?.descricao}`,
-        usuario: prev.configuracoes.perfil.nome || 'Usuário'
-      }, ...prev.logs]
-    }));
+        detalhes: `Patrimônio removido: ${item?.descricao}`
+      });
+
+      return syncDividas(syncSonhosProjetos(newData));
+    });
     showToast(`${item?.descricao} removido do patrimônio.`, 'success');
   };
 
@@ -1499,26 +1582,48 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const addParcelamento = (parcelamento: Omit<Parcelamento, 'id'>, numParcelas: number) => {
+    if (!validateIds(parcelamento.categoriaId, parcelamento.subcategoriaId, data.categorias)) {
+        console.error("Invalid IDs for parcelamento", parcelamento);
+        showToast('Categoria ou subcategoria inválida!', 'error');
+        return;
+    }
+    if (numParcelas <= 0 || parcelamento.valorTotal <= 0) {
+      showToast('Dados do parcelamento inválidos', 'error');
+      return;
+    }
+
     const parcelamentoId = crypto.randomUUID();
     const now = new Date().toISOString();
-    const roundedTotal = roundCurrency(parcelamento.valorTotal);
-    const valorParcela = roundCurrency(roundedTotal / numParcelas);
+    const totalCents = toCents(parcelamento.valorTotal);
+    const baseCents = Math.floor(totalCents / numParcelas);
+    const remainder = totalCents % numParcelas;
     const startDate = parseISO(parcelamento.dataInicio);
-    
-    // Check if parcelamento carries credit card billing info
-    const cobrancaMes = (parcelamento as any).mes;
-    const cobrancaAno = (parcelamento as any).ano;
-    
     // Set start date to the correct billing month if credit card info exists
-    const effectiveStartDate = (cobrancaMes !== undefined && cobrancaAno !== undefined) 
-      ? new Date(cobrancaAno, cobrancaMes, startDate.getDate())
-      : startDate;
-
+    const cartao = (parcelamento as any).cartaoId ? data.cartoes?.find(c => c.id === (parcelamento as any).cartaoId) : null;
+    let datasFatura: { mes: number, ano: number }[] = [];
+    
+    if (cartao) {
+       datasFatura = calcularQuantidadeFaturasAteVencimento(cartao, parcelamento.dataInicio, numParcelas);
+    } else if ((parcelamento as any).mes !== undefined && (parcelamento as any).ano !== undefined) {
+       // fallback for old code
+       const cobrancaMes = (parcelamento as any).mes;
+       const cobrancaAno = (parcelamento as any).ano;
+       for(let i=0; i<numParcelas; i++){
+          const date = addMonths(new Date(cobrancaAno, cobrancaMes), i);
+          datasFatura.push({ mes: date.getMonth(), ano: date.getFullYear() });
+       }
+    } else {
+       for(let i=0; i<numParcelas; i++){
+          const date = addMonths(startDate, i);
+          datasFatura.push({ mes: date.getMonth(), ano: date.getFullYear() });
+       }
+    }
+    
     const newParcelamento: Parcelamento = {
       ...parcelamento,
       id: parcelamentoId,
-      valorTotal: roundedTotal,
-      valorParcela,
+      valorTotal: fromCents(totalCents),
+      valorParcela: fromCents(baseCents), // Updated to base
       totalParcelas: numParcelas,
       tipo: parcelamento.tipo || 'despesa',
       statusAtivo: true,
@@ -1527,7 +1632,11 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     const newLancamentos: Lancamento[] = [];
     for (let i = 0; i < numParcelas; i++) {
-      const currentDate = addMonths(effectiveStartDate, i);
+      const { mes, ano } = datasFatura[i];                
+      const currentDate = new Date(ano, mes, startDate.getDate());
+      
+      const valorCents = (i < remainder) ? baseCents + 1 : baseCents;
+      
       newLancamentos.push({
         id: crypto.randomUUID(),
         ano: currentDate.getFullYear(),
@@ -1539,7 +1648,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         categoriaId: parcelamento.categoriaId,
         subcategoriaId: parcelamento.subcategoriaId,
         tipo: 'realizado',
-        valor: valorParcela,
+        valor: fromCents(valorCents),
         parcelamentoId: parcelamentoId,
         numeroParcela: i + 1,
         totalParcelas: numParcelas,
@@ -1557,6 +1666,13 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         parcelamentos: [...(prev.parcelamentos || []), newParcelamento],
         lancamentos: [...(prev.lancamentos || []), ...newLancamentos]
       };
+      
+      // Validação final de estado
+      if (newData.parcelamentos.length <= (prev.parcelamentos?.length || 0)) {
+        console.error('Falha na persistência do parcelamento');
+        return prev;
+      }
+
       return syncSonhosProjetos(newData);
     });
   };
@@ -1568,31 +1684,97 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         parcelamentos: (prev.parcelamentos || []).filter(p => p.id !== id),
         lancamentos: (prev.lancamentos || []).filter(l => l.parcelamentoId !== id)
       };
-      return syncSonhosProjetos(newData);
+      
+      addAuditLog({
+        entidade: 'parcelamento',
+        entidadeId: id,
+        acao: 'exclusao',
+        detalhes: 'Parcelamento completo removido'
+      });
+      
+      return syncDividas(syncSonhosProjetos(newData));
     });
   };
 
-  const addCartao = (cartao: Omit<Cartao, 'id' | 'criadoEm' | 'ativo'>) => {
+  const addCartao = (cartao: Omit<Cartao, 'id' | 'dataCriacao' | 'ativo'>) => {
+    if (!validateCartao(cartao)) {
+        showToast('Dados de cartão inválidos!', 'error');
+        return;
+    }
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
     setData(prev => ({
       ...prev,
-      cartoes: [...(prev.cartoes || []), { ...cartao, id, criadoEm: now, ativo: true }]
+      cartoes: [...(prev.cartoes || []), { ...cartao, id, dataCriacao: now, ativo: true } as Cartao]
     }));
   };
 
   const updateCartao = (id: string, updates: Partial<Cartao>) => {
-    setData(prev => ({
-      ...prev,
-      cartoes: (prev.cartoes || []).map(c => c.id === id ? { ...c, ...updates } : c)
-    }));
+    setData(prev => {
+      const card = prev.cartoes.find(c => c.id === id);
+      if (!card) return prev;
+
+      const updatedCard = { ...card, ...updates };
+      const cardChanged = updates.diaFechamento !== undefined || updates.diaVencimento !== undefined;
+      
+      const newCartoes = (prev.cartoes || []).map(c => c.id === id ? updatedCard : c);
+
+      let newLancamentos = prev.lancamentos || [];
+      let newParcelamentos = prev.parcelamentos || [];
+
+      if (cardChanged) {
+        // Recalculate parcelamentos linked to this card
+        newParcelamentos = newParcelamentos.map(p => {
+          if (p.cartaoId === id && p.dataCompra) {
+             const novaData = calcularDatasCobranca(updatedCard, p.dataCompra);
+             return {
+               ...p,
+               mesCobranca: novaData.mesLancamento,
+               anoCobranca: novaData.anoLancamento
+             };
+          }
+          return p;
+        });
+
+        // Recalculate lancamentos linked to this card's parcelamentos
+        newLancamentos = newLancamentos.map(l => {
+          if (l.cartaoId === id && l.parcelamentoId && l.dataCompra) {
+             const p = newParcelamentos.find(parcel => parcel.id === l.parcelamentoId);
+             if (p) {
+               const parcelasDatas = calcularQuantidadeFaturasAteVencimento(updatedCard, p.dataCompra!, p.totalParcelas);
+               const dataCobranca = parcelasDatas[(l.numeroParcela || 1) - 1];
+               if (dataCobranca) {
+                 return {
+                   ...l,
+                   mesCobranca: dataCobranca.mes,
+                   anoCobranca: dataCobranca.ano
+                 };
+               }
+             }
+          }
+          return l;
+        });
+      }
+
+      return syncSonhosProjetos(syncDividas({
+        ...prev,
+        cartoes: newCartoes,
+        parcelamentos: newParcelamentos,
+        lancamentos: newLancamentos
+      }));
+    });
   };
 
   const removeCartao = (id: string) => {
-    setData(prev => ({
-      ...prev,
-      cartoes: (prev.cartoes || []).filter(c => c.id !== id)
-    }));
+    setData(prev => {
+      const newData = {
+        ...prev,
+        cartoes: (prev.cartoes || []).filter(c => c.id !== id),
+        lancamentos: (prev.lancamentos || []).map(l => l.cartaoId === id ? { ...l, cartaoId: null, formaPagamento: 'Dinheiro' as PaymentMethod } : l),
+        parcelamentos: (prev.parcelamentos || []).map(p => p.cartaoId === id ? { ...p, cartaoId: null } : p)
+      };
+      return syncSonhosProjetos(syncDividas(newData));
+    });
   };
 
   const updateParcelamento = (id: string, updates: Partial<Parcelamento>) => {
@@ -1629,11 +1811,11 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         detalhes: `Parcelamento atualizado: ${updates.descricao || 'campos alterados'}`
       });
 
-      return {
+      return syncDividas(syncSonhosProjetos({
         ...prev,
-        parcelamentos: parcelamentos.map(p => p.id === id ? updatedParcelamento : p),
-        lancamentos: updatedLancamentos
-      };
+        lancamentos: updatedLancamentos,
+        parcelamentos: parcelamentos.map(p => p.id === id ? updatedParcelamento : p)
+      }));
     });
   };
 
@@ -1645,7 +1827,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
       const old = prev.lancamentos[index];
       const roundedUpdates = { ...updates };
-      if (updates.valor !== undefined) roundedUpdates.valor = roundCurrency(updates.valor);
+      if (updates.valor !== undefined) roundedUpdates.valor = fromCents(toCents(updates.valor));
       
       const updated = { ...old, ...roundedUpdates, dataEdicao: now };
       
@@ -1706,10 +1888,12 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         if (p.id === parcelamentoId) {
           const updatedP = { ...p };
           if (applyToAll.valor && roundedValor !== undefined) {
-            updatedP.valorParcela = roundedValor;
-            updatedP.valorTotal = roundCurrency(prev.lancamentos
+            updatedP.valorParcela = fromCents(toCents(roundedValor));
+            updatedP.valorTotal = fromCents(
+              prev.lancamentos
               .filter(l => l.parcelamentoId === parcelamentoId)
-              .reduce((acc, l) => acc + (l.numeroParcela! < fromParcela ? l.valor : roundedValor), 0));
+              .reduce((acc, l) => acc + toCents(l.numeroParcela! < fromParcela ? l.valor : roundedValor), 0)
+            );
           }
           return updatedP;
         }
@@ -1735,7 +1919,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const newLancamentos = prev.lancamentos.filter(l => l.id !== id);
       const newParcelamentos = prev.parcelamentos.map(p => {
         if (p.id === lancamento.parcelamentoId) {
-          return { ...p, valorTotal: roundCurrency(p.valorTotal - lancamento.valor) };
+          return { ...p, valorTotal: fromCents(Math.max(0, toCents(p.valorTotal) - toCents(lancamento.valor))) };
         }
         return p;
       });
@@ -1763,16 +1947,25 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
       const newParcelamentos = prev.parcelamentos.map(p => {
         if (p.id === parcelamentoId) {
+          const totalValueCents = keptLancamentos
+              .filter(l => l.parcelamentoId === parcelamentoId)
+              .reduce((acc, l) => acc + toCents(l.valor), 0);
+          
+          const realizedCount = keptLancamentos.filter(l => l.parcelamentoId === parcelamentoId && l.tipo === 'realizado').length;
+              
+          // If we are canceling all future parcels, consider the possibility to mark it as inactive if no parcels remain.
+          // For scenario 5, we keep it active as it still has parcels 1-4.
+          const isCancelled = keptLancamentos.filter(l => l.parcelamentoId === parcelamentoId).length === 0;
+
           return {
             ...p,
-            statusAtivo: false,
-            dataCancelamento: now,
-            motivoCancelamento: motivo || null,
-            observacaoCancelamento: obs || null,
-            parcelasEfetivamentePagas: fromParcela - 1,
-            valorTotal: roundCurrency(keptLancamentos
-              .filter(l => l.parcelamentoId === parcelamentoId)
-              .reduce((acc, l) => acc + l.valor, 0))
+            statusAtivo: !isCancelled,
+            dataCancelamento: isCancelled ? now : null,
+            motivoCancelamento: isCancelled ? (motivo || null) : null,
+            observacaoCancelamento: isCancelled ? (obs || null) : null,
+            parcelasEfetivamentePagas: realizedCount,
+            totalParcelas: keptLancamentos.filter(l => l.parcelamentoId === parcelamentoId).length,
+            valorTotal: fromCents(totalValueCents)
           };
         }
         return p;
@@ -1781,8 +1974,8 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       addAuditLog({
         entidade: 'parcelamento',
         entidadeId: parcelamentoId,
-        acao: 'arquivamento',
-        detalhes: `Parcelamento cancelado a partir da parcela ${fromParcela}`
+        acao: 'edicao',
+        detalhes: `Parcelas a partir da ${fromParcela} removidas`
       });
 
       return syncDividas(syncSonhosProjetos({ ...prev, lancamentos: keptLancamentos, parcelamentos: newParcelamentos }));
@@ -1846,8 +2039,29 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
       });
 
-      return { ...prev, orcamentosMensais: nextOrcamentos };
+      return syncOrcamentos({ ...prev, orcamentosMensais: nextOrcamentos });
     });
+  };
+
+  const getFilteredLancamentos = (filter: { year?: number; month?: number | 'all'; categoryId?: string; subcategoryId?: string; type?: 'realizado' | 'orcado' }): Lancamento[] => {
+    return data.lancamentos.filter(l => {
+      const isCC = l.formaPagamento === 'Cartão de Crédito';
+      const lYear = (isCC && l.anoCobranca !== undefined) ? l.anoCobranca : l.ano;
+      const lMonth = (isCC && l.mesCobranca !== undefined) ? l.mesCobranca : l.mes;
+
+      const matchYear = filter.year === undefined || lYear === filter.year;
+      const matchMonth = filter.month === undefined || filter.month === 'all' || lMonth === filter.month;
+      const matchCat = filter.categoryId === undefined || l.categoriaId === filter.categoryId;
+      const matchSub = filter.subcategoryId === undefined || l.subcategoriaId === filter.subcategoryId;
+      const matchType = filter.type === undefined || l.tipo === filter.type;
+
+      return matchYear && matchMonth && matchCat && matchSub && matchType;
+    });
+  };
+
+  const getSummedLancamentos = (filter: { year?: number; month?: number | 'all'; categoryId?: string; subcategoryId?: string; type?: 'realizado' | 'orcado' }): number => {
+    const filtered = getFilteredLancamentos(filter);
+    return filtered.reduce((acc, l) => acc + toCents(l.valor), 0);
   };
 
   const dismissDividasWelcome = () => {
@@ -1904,6 +2118,7 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       updateSubcategory,
       archiveSubcategory,
       removeSubcategory,
+      removeAllSubcategories,
       reorderCategories,
       addDivida, 
       updateDivida,
@@ -1932,6 +2147,10 @@ export const FinanceProvider: React.FC<{ children: React.ReactNode }> = ({ child
       cancelInstallmentsRemaining,
       updateOrcamento,
       copyOrcamentoToNextMonth,
+      getFilteredLancamentos,
+      getSummedLancamentos,
+      activeTimeframe,
+      setActiveTimeframe,
       dismissDividasWelcome,
       setOnboarded,
       resetData,

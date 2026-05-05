@@ -1,6 +1,6 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useFinance } from '../contexts/FinanceContext';
-import { formatCurrency, formatPercent, formatDate } from '../lib/utils';
+import { formatCurrency, formatPercent, formatDate, toCents, fromCents } from '../lib/utils';
 import { useTranslation } from '../i18n/useTranslation';
 import { 
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, 
@@ -177,15 +177,18 @@ const SyntheticCategoryCard = ({ item, isExpanded, onToggle }: any) => {
 interface DashboardProps {}
 
 export const Dashboard: React.FC<DashboardProps> = () => {
-  const { data, removeLancamento, updateLancamentoFull, removeParcelamento, dismissDividasWelcome } = useFinance();
+  const { data, removeLancamento, updateLancamentoFull, removeParcelamento, dismissDividasWelcome, getSummedLancamentos, activeTimeframe, setActiveTimeframe } = useFinance();
   const { t, lang } = useTranslation();
-  const currentYear = new Date().getFullYear();
-  const currentMonth = new Date().getMonth();
-  const [year, setYear] = useState(currentYear);
   
-  // Synthetic View Filters State
-  const [filterYear, setFilterYear] = useState(currentYear);
-  const [filterMonth, setFilterMonth] = useState<number | 'all'>('all');
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth();
+  const [filterYear, setFilterYear] = useState(new Date().getFullYear());
+  const [filterMonth, setFilterMonth] = useState<number | 'all'>(new Date().getMonth());
+
+  // const lastSyncTimeframe = useRef({ year: filterYear, month: filterMonth });
+
+  
   const [filterCategories, setFilterCategories] = useState<string[]>([]);
   const [filterSubcategory, setFilterSubcategory] = useState<string | 'all'>('all');
   const [viewMode, setViewMode] = useState<'lista' | 'grafico'>('lista');
@@ -215,61 +218,44 @@ export const Dashboard: React.FC<DashboardProps> = () => {
   const [managingInstallment, setManagingInstallment] = useState<Lancamento | null>(null);
   const [deletingLancamento, setDeletingLancamento] = useState<Lancamento | null>(null);
 
-  const yearLancamentos = data.lancamentos.filter(l => l.ano === year);
+  // Keep yearLancamentos for Chart Data logic
+  const yearLancamentos = data.lancamentos.filter(l => l.ano === filterYear);
   
-  useEffect(() => {
-    const fetchInsights = async () => {
-      setIsLoadingInsights(true);
-      try {
-        const familiaId = data.familia.id;
-        const response = await fetch(`/api/alertas-e-conquistas?familiaId=${familiaId}&mes=${selectedMonth.getMonth()}&ano=${selectedMonth.getFullYear()}`);
-        if (response.ok) {
-          const result = await response.json();
-          setMonthlyInsights(result);
-        }
-      } catch (error) {
-        console.error("Error fetching insights:", error);
-      } finally {
-        setIsLoadingInsights(false);
-      }
+  const year = filterYear; // Use filterYear for consistency
+  const month = filterMonth;
+  
+  // Calculate totals in cents first
+  const { totalRecebidoCents, totalGastoCents, totalInvestidoCents } = useMemo(() => {
+    // Helper to get sum for specific category type
+    const getSum = (type: string) => {
+        const catIds = data.categorias.filter(c => c.tipo === type && c.ativa).map(c => c.id);
+        let sum = 0;
+        catIds.forEach(id => {
+            sum += getSummedLancamentos({ year, month, categoryId: id, type: 'realizado' });
+        });
+        return sum;
+    }
+
+    return {
+      totalRecebidoCents: getSum('renda'),
+      totalGastoCents: getSum('despesa'),
+      totalInvestidoCents: getSum('investimento')
     };
+  }, [year, month, data.categorias, getSummedLancamentos]);
 
-    fetchInsights();
-  }, [selectedMonth, data.familia.id]);
+  const totalRecebido = fromCents(totalRecebidoCents);
+  const totalGasto = fromCents(totalGastoCents);
+  const totalInvestido = fromCents(totalInvestidoCents);
 
-  const totalRecebido = yearLancamentos
-    .filter(l => l.tipo === 'realizado' && data.categorias.find(c => c.id === l.categoriaId)?.tipo === 'renda')
-    .filter(l => {
-      const isFuture = l.ano > currentYear || (l.ano === currentYear && l.mes > currentMonth);
-      return !isFuture;
-    })
-    .reduce((acc, l) => acc + l.valor, 0);
-
-  const totalGasto = yearLancamentos
-    .filter(l => l.tipo === 'realizado' && data.categorias.find(c => c.id === l.categoriaId)?.tipo === 'despesa')
-    .filter(l => {
-      const isFuture = l.ano > currentYear || (l.ano === currentYear && l.mes > currentMonth);
-      return !isFuture;
-    })
-    .reduce((acc, l) => acc + l.valor, 0);
-
-  const totalInvestido = yearLancamentos
-    .filter(l => l.tipo === 'realizado' && data.categorias.find(c => c.id === l.categoriaId)?.tipo === 'investimento')
-    .filter(l => {
-      const isFuture = l.ano > currentYear || (l.ano === currentYear && l.mes > currentMonth);
-      return !isFuture;
-    })
-    .reduce((acc, l) => acc + l.valor, 0);
-
-  const saldoAnual = totalRecebido - totalGasto - totalInvestido;
+  const saldoAnual = fromCents(totalRecebidoCents - totalGastoCents - totalInvestidoCents);
 
   // Chart data
   const categoryTotals = data.categorias
     .filter(c => c.tipo === 'despesa')
     .map(c => {
-      const total = yearLancamentos
+      const total = fromCents(yearLancamentos
         .filter(l => l.categoriaId === c.id && l.tipo === 'realizado')
-        .reduce((acc, l) => acc + l.valor, 0);
+        .reduce((acc, l) => acc + toCents(l.valor), 0));
       return { name: c.nome, value: total, color: c.cor };
     })
     .filter(c => c.value > 0);
@@ -365,29 +351,22 @@ export const Dashboard: React.FC<DashboardProps> = () => {
 
     const results = filteredCats.map(cat => {
       // Calculate Realized
-      const realized = data.lancamentos
-        .filter(l => {
-          const isCC = l.formaPagamento === 'Cartão de Crédito';
-          const lYear = isCC && l.anoCobranca !== undefined ? l.anoCobranca : l.ano;
-          const lMonth = isCC && l.mesCobranca !== undefined ? l.mesCobranca : l.mes;
-          
-          const matchYear = lYear === filterYear;
-          const matchMonth = filterMonth === 'all' ? true : lMonth === filterMonth;
-          const matchCat = l.categoriaId === cat.id;
-          const matchSub = filterSubcategory === 'all' ? true : l.subcategoriaId === filterSubcategory;
-          
-          return matchYear && matchMonth && matchCat && matchSub && l.tipo === 'realizado';
-        })
-        .reduce((acc, l) => acc + l.valor, 0);
+      const realized = getSummedLancamentos({ 
+          year: filterYear, 
+          month: filterMonth, 
+          categoryId: cat.id, 
+          subcategoryId: filterSubcategory === 'all' ? undefined : filterSubcategory, 
+          type: 'realizado' 
+      });
 
       // Calculate Budgeted
       let budgeted = 0;
       if (filterSubcategory !== 'all') {
         // Subcategoria específica
         if (filterMonth === 'all') {
-          budgeted = data.orcamentosMensais
+          budgeted = fromCents(data.orcamentosMensais
             .filter(o => o.ano === filterYear && o.subcategoriaId === filterSubcategory)
-            .reduce((acc, o) => acc + (o.valorOrcado || 0), 0);
+            .reduce((acc, o) => acc + toCents(o.valorOrcado || 0), 0));
         } else {
           budgeted = data.orcamentosMensais.find(o => 
             o.ano === filterYear && o.mes === filterMonth && o.subcategoriaId === filterSubcategory
@@ -396,13 +375,13 @@ export const Dashboard: React.FC<DashboardProps> = () => {
       } else {
         // Soma de todas as subcategorias da categoria
         if (filterMonth === 'all') {
-          budgeted = data.orcamentosMensais
+          budgeted = fromCents(data.orcamentosMensais
             .filter(o => o.ano === filterYear && o.categoriaId === cat.id && o.subcategoriaId)
-            .reduce((acc, o) => acc + (o.valorOrcado || 0), 0);
+            .reduce((acc, o) => acc + toCents(o.valorOrcado || 0), 0));
         } else {
-          budgeted = data.orcamentosMensais
+          budgeted = fromCents(data.orcamentosMensais
             .filter(o => o.ano === filterYear && o.mes === filterMonth && o.categoriaId === cat.id && o.subcategoriaId)
-            .reduce((acc, o) => acc + (o.valorOrcado || 0), 0);
+            .reduce((acc, o) => acc + toCents(o.valorOrcado || 0), 0));
         }
       }
 
@@ -410,23 +389,18 @@ export const Dashboard: React.FC<DashboardProps> = () => {
       const subResults = cat.subcategorias
         .filter(s => s.ativa && (filterSubcategory === 'all' ? true : s.id === filterSubcategory))
         .map(sub => {
-          const subRealized = data.lancamentos
-            .filter(l => {
-              const isCC = l.formaPagamento === 'Cartão de Crédito';
-              const lYear = isCC && l.anoCobranca !== undefined ? l.anoCobranca : l.ano;
-              const lMonth = isCC && l.mesCobranca !== undefined ? l.mesCobranca : l.mes;
-              
-              const matchYear = lYear === filterYear;
-              const matchMonth = filterMonth === 'all' ? true : lMonth === filterMonth;
-              return matchYear && matchMonth && l.subcategoriaId === sub.id && l.tipo === 'realizado';
-            })
-            .reduce((acc, l) => acc + l.valor, 0);
+          const subRealized = getSummedLancamentos({
+            year: filterYear,
+            month: filterMonth,
+            subcategoryId: sub.id,
+            type: 'realizado'
+          });
 
           let subBudgeted = 0;
           if (filterMonth === 'all') {
-            subBudgeted = data.orcamentosMensais
+            subBudgeted = fromCents(data.orcamentosMensais
               .filter(o => o.ano === filterYear && o.subcategoriaId === sub.id)
-              .reduce((acc, o) => acc + (o.valorOrcado || 0), 0);
+              .reduce((acc, o) => acc + toCents(o.valorOrcado || 0), 0));
           } else {
             subBudgeted = data.orcamentosMensais.find(o => 
               o.ano === filterYear && o.mes === filterMonth && o.subcategoriaId === sub.id
@@ -456,8 +430,8 @@ export const Dashboard: React.FC<DashboardProps> = () => {
       };
     }).sort((a, b) => b.realized - a.realized);
 
-    const totalOrcado = results.reduce((acc, r) => acc + r.budgeted, 0);
-    const totalRealizado = results.reduce((acc, r) => acc + r.realized, 0);
+    const totalOrcado = fromCents(results.reduce((acc, r) => acc + toCents(r.budgeted), 0));
+    const totalRealizado = fromCents(results.reduce((acc, r) => acc + toCents(r.realized), 0));
 
     return {
       items: results,
@@ -554,9 +528,9 @@ ${t('dashboard.execution')}: ${formatPercent(syntheticData.percentTotal / 100, l
           <p className="text-sm text-gray-medium">{t('dashboard.subtitle')}</p>
         </div>
         <div className="flex items-center gap-2 bg-white-pure p-1 rounded-xl border border-gray-soft shadow-sm">
-          <button onClick={() => setYear(year - 1)} className="p-1 hover:bg-white-off rounded-lg text-gray-medium"><ChevronLeft size={20} /></button>
-          <span className="font-sans font-bold px-2 text-navy-principal">{year}</span>
-          <button onClick={() => setYear(year + 1)} className="p-1 hover:bg-white-off rounded-lg text-gray-medium"><ChevronRight size={20} /></button>
+          <button onClick={() => setFilterYear(filterYear - 1)} className="p-1 hover:bg-white-off rounded-lg text-gray-medium"><ChevronLeft size={20} /></button>
+          <span className="font-sans font-bold px-2 text-navy-principal">{filterYear}</span>
+          <button onClick={() => setFilterYear(filterYear + 1)} className="p-1 hover:bg-white-off rounded-lg text-gray-medium"><ChevronRight size={20} /></button>
         </div>
       </div>
 

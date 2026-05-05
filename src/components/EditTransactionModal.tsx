@@ -7,6 +7,7 @@ import { cn, formatCurrency, formatDate } from '../lib/utils';
 import { format, parseISO } from 'date-fns';
 import { CurrencyInput } from './CurrencyInput';
 import { useTranslation } from '../i18n/useTranslation';
+import { toCents } from '../lib/currency';
 
 interface EditTransactionModalProps {
   lancamento: Lancamento;
@@ -19,7 +20,8 @@ export const EditTransactionModal: React.FC<EditTransactionModalProps> = ({ lanc
   const { data, updateLancamentoFull, updateInstallmentIndividual, updateInstallmentsRemaining } = useFinance();
   const { t, lang } = useTranslation();
   
-  const [valor, setValor] = useState(lancamento.valor.toString());
+  // lancamento.valor is already in cents, so we need to convert to decimal string for the Input
+  const [valor, setValor] = useState((lancamento.valor / 100).toString());
   const [descricao, setDescricao] = useState(lancamento.descricao || '');
   const [dataStr, setDataStr] = useState(lancamento.data ? format(parseISO(lancamento.data), 'yyyy-MM-dd') : format(new Date(lancamento.ano, lancamento.mes, lancamento.dia || 1), 'yyyy-MM-dd'));
   const [categoriaId, setCategoriaId] = useState(lancamento.categoriaId);
@@ -41,7 +43,7 @@ export const EditTransactionModal: React.FC<EditTransactionModalProps> = ({ lanc
 
   const handleSave = () => {
     const date = parseISO(dataStr);
-    const numValor = parseFloat(valor);
+    const numValor = toCents(parseFloat(valor));
 
     if (lancamento.parcelamentoId) {
       if (editMode === 'single') {

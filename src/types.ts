@@ -39,7 +39,7 @@ export interface Cartao {
   diaFechamento: number;
   diaVencimento: number;
   ativo: boolean;
-  criadoEm: string;
+  dataCriacao: string;
 }
 
 export interface Lancamento {
@@ -47,13 +47,14 @@ export interface Lancamento {
   ano: number;
   mes: number;
   dia?: number;
-  data?: string; // ISO string
-  dataCriacao: string; // ISO string for sorting
+  data?: string; 
+  dataCriacao: string;
+  dataEdicao?: string;
   descricao?: string;
   categoriaId: string;
   subcategoriaId: string;
   tipo: TransactionType;
-  valor: number;
+  valor: number; // Valor em centavos
   observacao?: string;
   parcelamentoId?: string;
   numeroParcela?: number;
@@ -63,13 +64,12 @@ export interface Lancamento {
   dataCompra?: string;
   mesCobranca?: number;
   anoCobranca?: number;
-  dataEdicao?: string;
 }
 
 export interface AuditLog {
   id: string;
   timestamp: string;
-  entidade: 'lancamento' | 'parcelamento' | 'divida' | 'meta' | 'categoria' | 'subcategoria';
+  entidade: 'lancamento' | 'parcelamento' | 'divida' | 'meta' | 'categoria' | 'subcategoria' | 'patrimonio';
   entidadeId: string;
   acao: 'criacao' | 'edicao' | 'exclusao' | 'arquivamento' | 'reativacao';
   detalhes: string;
@@ -81,8 +81,8 @@ export interface Parcelamento {
   descricao: string;
   valorTotal: number;
   diaVencimento: number;
-  dataInicio: string; // ISO string
-  dataFim: string; // ISO string
+  dataInicio: string;
+  dataFim: string;
   statusAtivo: boolean;
   categoriaId: string;
   subcategoriaId: string;
@@ -96,8 +96,8 @@ export interface Parcelamento {
   parcelasEfetivamentePagas?: number;
   cartaoId?: string | null;
   dataCompra?: string;
-  mes?: number;
-  ano?: number;
+  mesCobranca?: number;
+  anoCobranca?: number;
 }
 
 export interface PagamentoDivida {
@@ -145,9 +145,9 @@ export interface Familia {
 }
 
 export interface MetasMensais {
-  aporteInvestimentos: number; // 0.20
-  doacoes: number; // 0.10
-  gastos: number; // 0.70
+  aporteInvestimentos: number; 
+  doacoes: number; 
+  gastos: number; 
 }
 
 export interface OrcamentoMensal {
@@ -213,13 +213,13 @@ export interface PerfilUsuario {
   nome: string;
   codigo: string;
   senhaHash: string;
-  criadoEm: string;
+  dataCriacao: string;
 }
 
 export interface Configuracoes {
   tamanhoFonte: 'pequena' | 'media' | 'grande' | 'extra';
   tema: 'classico' | 'noturno' | 'verde' | 'oceano' | 'ambar' | 'rosa';
-  idioma: 'pt' | 'en' | 'es';
+  idioma: 'pt';
   notificacoes: boolean;
   ocultarValores: boolean;
   perfil: PerfilUsuario;
@@ -236,7 +236,7 @@ export interface Patrimonio {
   dataAquisicao: string;
   observacao?: string;
   ativo: boolean;
-  criadoEm: string;
+  dataCriacao: string;
 }
 
 export interface FinanceData {

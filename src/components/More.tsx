@@ -42,8 +42,8 @@ export const More: React.FC<MoreProps> = ({ initialView = 'menu', onResetView })
       <div className="grid grid-cols-1 gap-4">
         <MenuButton 
           icon={<CreditCard className="text-navy-principal" />} 
-          title="Cartões de Crédito" 
-          description="Gerencie seus cartões e faturas"
+          title={t('more.cards.title')}
+          description={t('more.cards.description')}
           onClick={() => setShowCards(true)}
         />
         <MenuButton 

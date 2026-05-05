@@ -51,6 +51,14 @@ export const CurrencyInput: React.FC<CurrencyInputProps> = ({
     const input = e.target.value;
     const normalized = validateAndNormalize(input, true);
     if (normalized === null) return; // Block the character
+
+    const val = parseFloat(normalized.replace(',', '.'));
+    if (val === 0) {
+      setError("Valor não pode ser zero.");
+    } else {
+      setError(null);
+    }
+    
     onChange(normalized.replace(',', '.'));
   };
 

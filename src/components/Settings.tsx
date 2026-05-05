@@ -31,7 +31,6 @@ export const Settings: React.FC<SettingsProps> = ({ onBack }) => {
   const { t, lang } = useTranslation();
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
-  const [isLangModalOpen, setIsLangModalOpen] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState('');
 
   const handleExport = (type: 'xlsx' | 'csv') => {
@@ -221,38 +220,6 @@ export const Settings: React.FC<SettingsProps> = ({ onBack }) => {
           </div>
         </section>
 
-        {/* BLOCO 4 — IDIOMA */}
-        <section className="space-y-4">
-          <h3 className="text-[10px] font-black text-gray-light uppercase tracking-[0.2em] px-2">{t('settings.language.title')}</h3>
-          <div className="bg-white-pure rounded-[32px] border border-gray-soft shadow-sm overflow-hidden divide-y divide-gray-soft">
-            {[
-              { id: 'pt', name: 'Português', flag: '🇧🇷', desc: 'Português Brasileiro' },
-              { id: 'en', name: 'English', flag: '🇺🇸', desc: 'American English' },
-              { id: 'es', name: 'Español', flag: '🇪🇸', desc: 'Español latinoamericano' }
-            ].map((l) => (
-              <button
-                key={l.id}
-                onClick={() => setIsLangModalOpen(l.id)}
-                className="w-full p-5 flex items-center justify-between hover:bg-white-off transition-colors"
-              >
-                <div className="flex items-center gap-4">
-                  <span className="text-2xl">{l.flag}</span>
-                  <div className="text-left">
-                    <p className="text-sm font-bold text-navy-principal">{l.name}</p>
-                    <p className="text-[10px] text-gray-medium">{l.desc}</p>
-                  </div>
-                </div>
-                <div className={cn(
-                  "w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all",
-                  data.configuracoes.idioma === l.id ? "border-gold-principal bg-gold-principal text-navy-principal" : "border-gray-ice"
-                )}>
-                  {data.configuracoes.idioma === l.id && <Check size={14} />}
-                </div>
-              </button>
-            ))}
-          </div>
-        </section>
-
         {/* BLOCO 5 — OUTROS */}
         <section className="space-y-4">
           <h3 className="text-[10px] font-black text-gray-light uppercase tracking-[0.2em] px-2">{t('settings.other.title')}</h3>
@@ -353,43 +320,6 @@ export const Settings: React.FC<SettingsProps> = ({ onBack }) => {
           />
         )}
 
-        {/* Language Confirmation Modal */}
-        {isLangModalOpen && (
-          <div className="fixed inset-0 bg-navy-dark/60 backdrop-blur-sm z-[300] flex items-center justify-center p-6">
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white-pure w-full max-w-xs rounded-[40px] p-8 space-y-6 text-center shadow-2xl"
-            >
-              <div className="w-20 h-20 bg-gold-soft rounded-full flex items-center justify-center mx-auto text-4xl shadow-inner">
-                <Globe size={40} className="text-gold-principal" />
-              </div>
-              <div className="space-y-2">
-                <h3 className="text-xl font-serif font-bold text-navy-principal">{t('settings.language.confirm.title')}</h3>
-                <p className="text-sm text-gray-medium leading-relaxed">{t('settings.language.confirm.desc')}</p>
-              </div>
-              <div className="flex flex-col gap-3">
-                <button 
-                  onClick={() => {
-                    updateConfiguracoes({ idioma: isLangModalOpen as any });
-                    setIsLangModalOpen(null);
-                  }}
-                  className="w-full py-4 bg-navy-principal text-white-pure rounded-2xl font-bold shadow-lg shadow-navy-principal/10"
-                >
-                  {t('common.save')}
-                </button>
-                <button 
-                  onClick={() => setIsLangModalOpen(null)}
-                  className="w-full py-2 text-gray-light font-bold text-sm"
-                >
-                  {t('common.cancel')}
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-
         {/* Delete All Confirmation Modal */}
         {isDeleteModalOpen && (
           <div className="fixed inset-0 bg-navy-dark/60 backdrop-blur-sm z-[300] flex items-center justify-center p-6">
@@ -471,7 +401,7 @@ const ProfileModal = ({ onClose, perfilAtual, onSave }: { onClose: () => void, p
       nome,
       codigo,
       senhaHash: hash,
-      criadoEm: perfilAtual.criadoEm || new Date().toISOString()
+      dataCriacao: perfilAtual.dataCriacao || new Date().toISOString()
     });
   };
 

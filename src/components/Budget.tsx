@@ -5,16 +5,33 @@ import { useTranslation } from '../i18n/useTranslation';
 import { 
   ChevronLeft, ChevronRight, ChevronDown, Lock, 
   Info, Copy, Calendar, CheckCircle2, AlertCircle,
-  TrendingUp, TrendingDown, Minus
+  TrendingUp, TrendingDown, Minus, Trash2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, addMonths, startOfMonth } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { toCents, toDecimal } from '../lib/currency';
+
+import React, { useState, useMemo, useEffect } from 'react';
+import { useFinance } from '../contexts/FinanceContext';
+import { formatCurrency, cn, formatDate } from '../lib/utils';
+import { useTranslation } from '../i18n/useTranslation';
+import { 
+  ChevronLeft, ChevronRight, ChevronDown, Lock, 
+  Info, Copy, Calendar, CheckCircle2, AlertCircle,
+  TrendingUp, TrendingDown, Minus, Trash2
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { format, addMonths, startOfMonth } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
+import { toCents, toDecimal } from '../lib/currency';
 
 export const Budget: React.FC = () => {
-  const { data, updateOrcamento, copyOrcamentoToNextMonth } = useFinance();
+  const { data, updateOrcamento, copyOrcamentoToNextMonth, getSummedLancamentos, activeTimeframe, setActiveTimeframe, removeAllSubcategories } = useFinance();
   const { t, lang } = useTranslation();
-  const [selectedDate, setSelectedDate] = useState(startOfMonth(new Date()));
+  const safeActiveTimeframe = activeTimeframe || { year: new Date().getFullYear(), month: new Date().getMonth() };
+  const selectedDate = new Date(safeActiveTimeframe.year, safeActiveTimeframe.month, 1);
+  const setSelectedDate = (date: Date) => setActiveTimeframe(date.getFullYear(), date.getMonth());
   const [expandedCategories, setExpandedCategories] = useState<string[]>([]);
   const [showTooltip, setShowTooltip] = useState<{ id: string, type: 'cat' | 'sub' } | null>(null);
   const [detailSubcategory, setDetailSubcategory] = useState<{catId: string, subcatId: string, nome: string} | null>(null);
@@ -54,34 +71,31 @@ export const Budget: React.FC = () => {
   }, [data.orcamentosMensais, year, month]);
 
   const getRealizado = React.useCallback((catId: string, subcatId?: string) => {
-    return data.lancamentos
-      .filter(l => 
-        l.ano === year && 
-        l.mes === month && 
-        l.categoriaId === catId && 
-        (subcatId ? l.subcategoriaId === subcatId : true) &&
-        l.tipo === 'realizado'
-      )
-      .reduce((acc, l) => acc + l.valor, 0);
-  }, [data.lancamentos, year, month]);
+    return getSummedLancamentos({
+        year: year,
+        month: month,
+        categoryId: catId,
+        subcategoryId: subcatId,
+        type: 'realizado'
+    });
+  }, [getSummedLancamentos, year, month]);
 
   const totals = useMemo(() => {
     const activeCats = data.categorias.filter(c => c.ativa);
-    let totalOrcado = 0;
-    let totalRealizado = 0;
+    let totalOrcadoCents = 0;
+    let totalRealizadoCents = 0;
 
     activeCats.forEach(cat => {
-      // Somar orçado das subcategorias para compor o total da categoria
-      const catOrcado = cat.subcategorias
+      const catOrcadoCents = cat.subcategorias
         .filter(s => s.ativa)
         .reduce((acc, s) => acc + (getOrcado(cat.id, s.id) || 0), 0);
       
-      totalOrcado += catOrcado;
-      totalRealizado += getRealizado(cat.id);
+      totalOrcadoCents += catOrcadoCents;
+      totalRealizadoCents += getRealizado(cat.id);
     });
 
-    return { totalOrcado, totalRealizado, saldo: totalOrcado - totalRealizado };
-  }, [data.categorias, data.orcamentosMensais, data.lancamentos, year, month, getOrcado]);
+    return { totalOrcado: totalOrcadoCents, totalRealizado: totalRealizadoCents, saldo: totalOrcadoCents - totalRealizadoCents };
+  }, [data.categorias, data.orcamentosMensais, data.lancamentos, year, month, getOrcado, getRealizado]);
 
   const handleCopyBudget = () => {
     copyOrcamentoToNextMonth(year, month);
@@ -102,13 +116,20 @@ export const Budget: React.FC = () => {
           </div>
           <div className="flex items-center gap-2">
             <button 
-              onClick={() => setSelectedDate(prev => addMonths(prev, -1))}
+              onClick={removeAllSubcategories}
+              className="p-2 hover:bg-red-soft text-red-brick rounded-xl transition-colors"
+              title={t('budget.removeAllSubcategories')}
+            >
+              <Trash2 size={20} />
+            </button>
+            <button 
+              onClick={() => setSelectedDate(addMonths(selectedDate, -1))}
               className="p-2 hover:bg-white-off rounded-xl transition-colors text-gray-light"
             >
               <ChevronLeft size={24} />
             </button>
             <button 
-              onClick={() => setSelectedDate(prev => addMonths(prev, 1))}
+              onClick={() => setSelectedDate(addMonths(selectedDate, 1))}
               className="p-2 hover:bg-white-off rounded-xl transition-colors text-gray-light"
             >
               <ChevronRight size={24} />
@@ -275,7 +296,7 @@ export const Budget: React.FC = () => {
                 onClick={() => setDetailSubcategory(null)}
                 className="w-full py-4 bg-navy-principal text-white-pure rounded-2xl font-bold shadow-lg"
               >
-                Fechar
+                {t('budget.close')}
               </button>
             </motion.div>
           </div>
@@ -520,17 +541,17 @@ const BudgetCategoryItem = ({
 const BudgetField = ({ label, value, onChange, editable, locked, onClick, small }: any) => {
   const { t, lang } = useTranslation();
   const [isEditing, setIsEditing] = useState(false);
-  const [localValue, setLocalValue] = useState(value?.toString() || '');
+  const [localValue, setLocalValue] = useState(value !== null ? toDecimal(value).toString() : '');
 
   useEffect(() => {
     if (!isEditing) {
-      setLocalValue(value?.toString() || '');
+      setLocalValue(value !== null ? toDecimal(value).toString() : '');
     }
   }, [value, isEditing]);
 
   const handleBlur = () => {
     setIsEditing(false);
-    const numericValue = localValue === '' ? null : parseFloat(localValue.replace(',', '.')) || 0;
+    const numericValue = localValue === '' ? null : toCents(parseFloat(localValue.replace(',', '.')) || 0);
     onChange?.(numericValue);
   };
 

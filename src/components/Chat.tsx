@@ -6,6 +6,7 @@ import { Send, X, Bot, User, Loader2, Wifi, WifiOff } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { cn } from '../lib/utils';
 import { useNetwork } from '../hooks/useNetwork';
+import { useTranslation } from '../i18n/useTranslation';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -14,9 +15,10 @@ interface Message {
 
 export const Chat: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const { data } = useFinance();
+  const { t } = useTranslation();
   const isOnline = useNetwork();
   const [messages, setMessages] = useState<Message[]>([
-    { role: 'assistant', content: `Olá! Sou seu assistente do Nossa Grana. Como posso ajudar a **${data.familia.nome}** hoje?` }
+    { role: 'assistant', content: t('chat.welcome', data.familia.nome) }
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -40,7 +42,7 @@ export const Chat: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       const response = await getAssistantResponse(userMsg, data);
       setMessages(prev => [...prev, { role: 'assistant', content: response }]);
     } catch (error) {
-      setMessages(prev => [...prev, { role: 'assistant', content: "Ops, tive um probleminha. Pode tentar de novo?" }]);
+      setMessages(prev => [...prev, { role: 'assistant', content: t('chat.error') }]);
     } finally {
       setIsLoading(false);
     }
@@ -60,10 +62,10 @@ export const Chat: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             <Bot size={24} />
           </div>
           <div>
-            <h2 className="font-bold text-gray-900">Assistente Nossa Grana</h2>
+            <h2 className="font-bold text-gray-900">{t('chat.title')}</h2>
             <div className={cn("flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest", isOnline ? "text-[#00875A]" : "text-red-500")}>
               {isOnline ? <Wifi size={10} /> : <WifiOff size={10} />}
-              {isOnline ? "Online" : "Offline"}
+              {isOnline ? t('chat.status.online') : t('chat.status.offline')}
             </div>
           </div>
         </div>
@@ -116,7 +118,7 @@ export const Chat: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       <div className="p-6 border-t border-gray-100 bg-white sm:rounded-b-[32px]">
         {!isOnline && (
           <div className="mb-4 p-3 bg-red-50 text-red-700 text-xs rounded-xl text-center font-medium">
-            Você está offline. O assistente está indisponível agora.
+            {t('chat.offlineWarning')}
           </div>
         )}
         <div className="flex gap-2">
@@ -125,7 +127,7 @@ export const Chat: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-            placeholder={isOnline ? "Pergunte algo..." : "Assistente indisponível offline..."}
+            placeholder={isOnline ? t('chat.placeholder') : t('chat.placeholderOffline')}
             disabled={!isOnline || isLoading}
             className="flex-1 p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none focus:ring-2 focus:ring-[#00875A] transition-all text-sm disabled:opacity-50"
           />
